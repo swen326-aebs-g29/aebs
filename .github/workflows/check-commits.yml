@@ -16,34 +16,26 @@ jobs:
 
       - name: Check commit messages
         run: |
-          # Get all commits in this PR
-          COMMITS=77ec86c70b4ff7f8ee05745cd1183041b1e1c62e chore: add PR template, issue templates and contributing guide e884c445fe8eefe6b56f89c612f1218a80316b96 chore: add commit message template
+          COMMITS=$(git log origin/main..HEAD --format="%s")
           
           FAILED=0
           
-          while IFS= read -r line; do
-            HASH=
-            MSG=
-            
-            # Valid formats:
-            # type(REQ-XXX): description
-            # chore: description (no REQ ID required)
-            if echo "" | grep -qE '^(feat|fix|docs|test|refactor)\(REQ-[0-9]{3}\): .+$'; then
-              echo "PASS: "
-            elif echo "" | grep -qE '^chore: .+$'; then
-              echo "PASS (chore): "
+          while IFS= read -r MSG; do
+            if echo "$MSG" | grep -qE '^(feat|fix|test|refactor)\(REQ-[0-9]{3}\): .+$'; then
+              echo "PASS: $MSG"
+            elif echo "$MSG" | grep -qE '^(chore|docs): .+$'; then
+              echo "PASS (no REQ ID): $MSG"
             else
-              echo "FAIL: "
-              echo "Expected format: type(REQ-XXX): description"
-              echo "Valid types: feat, fix, docs, test, refactor"
-              echo "Or for admin tasks: chore: description"
+              echo "FAIL: $MSG"
+              echo "Expected: type(REQ-XXX): description"
+              echo "Or for docs/admin: chore: description OR docs: description"
               FAILED=1
             fi
-          done <<< ""
+          done <<< "$COMMITS"
           
-          if [  -eq 1 ]; then
+          if [ $FAILED -eq 1 ]; then
             echo ""
             echo "One or more commit messages do not follow the required format."
-            echo "See CONTRIBUTING.md for the full commit message guide."
+            echo "See CONTRIBUTING.md for the full guide."
             exit 1
           fi
