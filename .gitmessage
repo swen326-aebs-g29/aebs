@@ -1,0 +1,8 @@
+﻿# Type(REQ-XXX): short description
+# 
+# Types: feat, fix, docs, test, chore, refactor
+# Example: feat(REQ-012): implement braking decision logic
+# Example: fix(REQ-023): correct retry count in control module
+# Example: docs(REQ-001): update architecture diagram
+#
+# Replace REQ-XXX with the relevant requirement ID
