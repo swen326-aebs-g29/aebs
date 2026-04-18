@@ -153,6 +153,7 @@ public final class SimulatedWorldApp {
 
         for (int i = 0; i < 2000; i++) { // 20s
             t += dt;
+            world.setSimTimeS(t);
             scenario.step(world, dt);
 
             wheelAcc += dt;

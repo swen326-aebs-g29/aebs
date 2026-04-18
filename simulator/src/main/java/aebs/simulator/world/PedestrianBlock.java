@@ -29,6 +29,10 @@ public final class PedestrianBlock implements Collidable {
 
     public Aabb aabb() { return new Aabb(pos.x(), pos.y(), w, h); }
 
+    public void translate(double dx, double dy) {
+        pos = pos.add(new Vec2(dx, dy));
+    }
+
     public void step(double dtSeconds) {
         pos = pos.add(vel.mul(dtSeconds));
     }

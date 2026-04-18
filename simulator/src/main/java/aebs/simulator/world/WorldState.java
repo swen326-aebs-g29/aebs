@@ -15,10 +15,19 @@ public final class WorldState {
     private final List<CarBlock> npcs = new ArrayList<>();
     private final List<PedestrianBlock> pedestrians = new ArrayList<>();
 
+    /** Seconds since simulation start; drives environment and wheel-speed envelope. */
+    private double simTimeS = 0.0;
+
     public WorldState(double width, double height, CarBlock ego) {
         this.width = width;
         this.height = height;
         this.ego = ego;
+    }
+
+    public double simTimeS() { return simTimeS; }
+
+    public void setSimTimeS(double simTimeS) {
+        this.simTimeS = Math.max(0.0, simTimeS);
     }
 
     public double width() { return width; }
