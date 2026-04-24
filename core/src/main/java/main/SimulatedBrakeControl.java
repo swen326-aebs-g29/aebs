@@ -1,6 +1,6 @@
-package core.src.core.main;
+package core.src.main.java.main;
 
-import core.src.core.Interfaces.Controls.BrakingControlInterface;
+import core.src.main.java.Interfaces.Controls.BrakingControlInterface;
 
 public class SimulatedBrakeControl implements BrakingControlInterface {
     public void applyBrake(double v) {

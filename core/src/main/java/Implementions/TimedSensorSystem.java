@@ -1,6 +1,9 @@
-package core.src.core.Implementions;
+package core.src.main.java.Implementions;
 
-import core.src.core.Interfaces.Controls.ISensorSystem;
+import core.src.main.java.Interfaces.Controls.ISensorSystem;
+import core.src.main.java.Implementions.RadarReading;
+import core.src.main.java.Implementions.CameraReading;
+import core.src.main.java.Implementions.WheelSpeedReading;
 
 public class TimedSensorSystem implements ISensorSystem {
 

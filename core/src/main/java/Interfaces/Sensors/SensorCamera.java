@@ -1,4 +1,4 @@
-package core.src.core.Interfaces.Sensors;
+package core.src.main.java.Interfaces.Sensors;
 
 public interface SensorCamera {
     String classification();

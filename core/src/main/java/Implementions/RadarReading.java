@@ -1,6 +1,6 @@
-package core.src.core.Implementions;
+package core.src.main.java.Implementions;
 
-import core.src.core.Interfaces.Sensors.SensorRadar;
+import core.src.main.java.Interfaces.Sensors.SensorRadar;
 
 public record RadarReading(double distance, double speedKph, long timestamp) implements SensorRadar {
 

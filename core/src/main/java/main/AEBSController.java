@@ -1,12 +1,15 @@
-package core.src.core.main;
-import core.src.core.Interfaces.Controls.BrakingControlInterface;
-import core.src.core.Interfaces.Controls.IDriverInterface;
-import core.src.core.Interfaces.Controls.ISensorSystem;
-import core.src.core.Implementions.*;
+package core.src.main.java.main;
+import core.src.main.java.Interfaces.Controls.BrakingControlInterface;
+import core.src.main.java.Interfaces.Controls.IDriverInterface;
+import core.src.main.java.Interfaces.Controls.ISensorSystem;
+import core.src.core.main.IAEBSCorer;
+import core.src.main.java.Implementions.RadarReading;
+import core.src.main.java.Implementions.CameraReading;
+import core.src.main.java.Implementions.WheelSpeedReading;
 
 import java.util.*;
 
-public class AEBSController implements IAEBSCorer {
+public class AEBSController implements IAEBSCorer  {
 
     private final ISensorSystem sensors;
     private final BrakingControlInterface brake;

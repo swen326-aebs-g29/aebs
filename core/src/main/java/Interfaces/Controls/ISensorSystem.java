@@ -1,9 +1,9 @@
-package core.src.core.Interfaces.Controls;
+package core.src.main.java.Interfaces.Controls;
 
-import core.src.core.Implementions.CameraReading;
+import core.src.main.java.Implementions.CameraReading;
 
-import core.src.core.Implementions.RadarReading;
-import core.src.core.Implementions.WheelSpeedReading;
+import core.src.main.java.Implementions.RadarReading;
+import core.src.main.java.Implementions.WheelSpeedReading;
 
 public interface ISensorSystem {
    // RadarReading getRadarReading();

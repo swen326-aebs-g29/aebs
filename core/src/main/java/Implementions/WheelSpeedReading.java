@@ -1,6 +1,6 @@
-package core.src.core.Implementions;
+package core.src.main.java.Implementions;
 
-import core.src.core.Interfaces.Sensors.SensorWheelSpeed;
+import core.src.main.java.Interfaces.Sensors.SensorWheelSpeed;
 
 public record WheelSpeedReading(Double rpm, Long timestamp) implements SensorWheelSpeed {
 

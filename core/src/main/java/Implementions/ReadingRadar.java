@@ -1,6 +1,6 @@
-package core.src.core.Implementions;
+package core.src.main.java.Implementions;
 
-import core.src.core.Interfaces.Sensors.sensorReading;
+import core.src.main.java.Interfaces.Sensors.sensorReading;
 
 public class ReadingRadar implements sensorReading {
     private final double distance;

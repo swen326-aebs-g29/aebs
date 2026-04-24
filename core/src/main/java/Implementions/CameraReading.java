@@ -1,6 +1,6 @@
-package core.src.core.Implementions;
+package core.src.main.java.Implementions;
 
-import core.src.core.Interfaces.Sensors.SensorCamera;
+import core.src.main.java.Interfaces.Sensors.SensorCamera;
 
 public record CameraReading(String Classification, Double Confidence, long Timestamp) implements SensorCamera {
 

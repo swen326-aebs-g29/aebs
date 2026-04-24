@@ -1,5 +1,6 @@
-package core.src.core.Implementions;
-import core.src.core.Interfaces.Controls.ISensorSystem;
+package core.src.main.java.Implementions;
+import core.src.main.java.Interfaces.Controls.ISensorSystem;
+
 
 public class VehiclePerceptionSystem implements ISensorSystem {
 
