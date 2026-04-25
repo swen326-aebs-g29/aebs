@@ -5,6 +5,7 @@ import aebs.simulator.model.Vec2;
 import aebs.simulator.perception.CameraReading;
 import aebs.simulator.perception.RadarReading;
 import aebs.simulator.perception.RedundantSensorFusion;
+import aebs.simulator.perception.SensorHealthMonitor;
 import aebs.simulator.perception.SimulatedSensors;
 import aebs.simulator.perception.VehiclePerceptionSystem;
 import aebs.simulator.perception.WheelSpeedReading;
@@ -72,6 +73,7 @@ public final class SimulatedWorldApp {
                 new CameraReading[0],
                 new WheelSpeedReading[0]
         );
+        SensorHealthMonitor health = new SensorHealthMonitor();
 
         // Update sensors at their specified frequencies:
         // - wheel speed: 10ms (100Hz)
@@ -126,7 +128,8 @@ public final class SimulatedWorldApp {
             WheelSpeedReading[] wheelF = RedundantSensorFusion.fuseWheel(wheelA[0], wheelB[0]);
             perception.updateAllSensors(radarF, camF, wheelF);
 
-            System.out.println(formatPerception(perception, t, panel.world()));
+            SensorHealthMonitor.Health healthStatus = health.evaluate(t, radarF, camF, wheelF);
+            System.out.println(formatPerception(perception, t, panel.world(), healthStatus));
         });
         sensorTimer.setCoalesce(true);
         sensorTimer.start();
@@ -159,6 +162,7 @@ public final class SimulatedWorldApp {
                 new CameraReading[0],
                 new WheelSpeedReading[0]
         );
+        SensorHealthMonitor health = new SensorHealthMonitor();
 
         final double dt = 0.01; // 10ms base tick
         double t = 0.0;
@@ -204,11 +208,12 @@ public final class SimulatedWorldApp {
             perception.updateAllSensors(radarF, camF, wheelF);
             // Headless mode has no control loop; report brakeCmd as 0.
             world.setBrakeCommand(0.0);
-            System.out.println(formatPerception(perception, t, world));
+            SensorHealthMonitor.Health healthStatus = health.evaluate(t, radarF, camF, wheelF);
+            System.out.println(formatPerception(perception, t, world, healthStatus));
         }
     }
 
-    private static String formatPerception(VehiclePerceptionSystem p, double tS, WorldState world) {
+    private static String formatPerception(VehiclePerceptionSystem p, double tS, WorldState world, SensorHealthMonitor.Health h) {
         RadarReading[] r = p.getRadarReadings();
         CameraReading[] c = p.getCameraReadings();
         WheelSpeedReading[] w = p.getWheelSpeedReadings();
@@ -216,7 +221,8 @@ public final class SimulatedWorldApp {
         String r0 = r.length == 0 ? "" : String.format("%.2fm@%s", r[0].distanceMetres(), r[0].speedObject());
         double rpm0 = w.length == 0 || w[0].rpm() == null ? 0.0 : w[0].rpm();
 
-        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s",
-                tS, r.length, r0, c.length, w.length, rpm0, world.brakeCommand(), world.driverBrakeAlert() ? "YES" : "NO");
+        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s sensorHealth=%s",
+                tS, r.length, r0, c.length, w.length, rpm0, world.brakeCommand(), world.driverBrakeAlert() ? "YES" : "NO",
+                (h == null || h.ok()) ? "OK" : h.summary());
     }
 }
