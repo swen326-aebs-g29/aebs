@@ -36,6 +36,14 @@ public final class SimulatedSensors {
     public static final double WHEEL_RAPID_DECEL_THRESHOLD_KMH_S = 55.0;
     public static final double WHEEL_SEVERE_DECEL_THRESHOLD_KMH_S = 95.0;
 
+    /** Expected braking deceleration curve (km/h per second) at full brakeCommand=1.0. */
+    public static final double WHEEL_EXPECTED_DECEL_FULL_BRAKE_KMH_S = 120.0;
+
+    /** When not braking, wheel speed relaxes toward target at this max rate (km/h per second). */
+    private static final double WHEEL_RELAX_TO_TARGET_KMH_S = 120.0;
+    /** How much brakeCommand reduces wheel target speed (0..1). Lower = stays faster under braking. */
+    private static final double WHEEL_BRAKE_TARGET_REDUCTION = 0.55;
+
     private final double pxPerMeter;
     private final double wheelRadiusM;
     private final Random rng;
@@ -43,6 +51,9 @@ public final class SimulatedSensors {
     private double prevEgoSpeedKmhForDecel = -1.0;
     private double prevDecelSimTimeS = -1.0;
     private double lastLongitudinalDecelKmhPerS = 0.0;
+
+    private double prevWheelSimTimeS = -1.0;
+    private double lastWheelSimKmh = 0.0;
 
     public SimulatedSensors(double pxPerMeter, double wheelRadiusM, long seed) {
         this.pxPerMeter = Math.max(1e-6, pxPerMeter);
@@ -212,11 +223,45 @@ public final class SimulatedSensors {
         double cruiseKmh = 125.0 + 125.0 * Math.sin(world.simTimeS() * 0.11);
         cruiseKmh = clamp(cruiseKmh, WHEEL_SPEED_MIN_KMH, WHEEL_SPEED_MAX_KMH);
 
-        return clamp(
+        double targetKmh = clamp(
                 0.38 * lateralKmh + 0.62 * cruiseKmh,
                 WHEEL_SPEED_MIN_KMH,
                 WHEEL_SPEED_MAX_KMH
         );
+
+        // Apply brake to target (do not force to 0 unless crashed).
+        double brake = clamp(world.brakeCommand(), 0.0, 1.0);
+        double desiredKmh = world.ego().collided()
+                ? 0.0
+                : clamp(targetKmh * (1.0 - WHEEL_BRAKE_TARGET_REDUCTION * brake), WHEEL_SPEED_MIN_KMH, WHEEL_SPEED_MAX_KMH);
+
+        // Rate-limit wheel feedback so it accelerates/decelerates smoothly.
+        double t = world.simTimeS();
+        if (prevWheelSimTimeS < 0.0) {
+            prevWheelSimTimeS = t;
+            lastWheelSimKmh = desiredKmh;
+            return lastWheelSimKmh;
+        }
+        double dt = t - prevWheelSimTimeS;
+        if (dt <= 1e-9) return lastWheelSimKmh;
+        prevWheelSimTimeS = t;
+
+        double maxDecel = WHEEL_EXPECTED_DECEL_FULL_BRAKE_KMH_S * Math.max(brake, world.ego().collided() ? 1.0 : 0.0);
+        double maxAccel = WHEEL_RELAX_TO_TARGET_KMH_S;
+        lastWheelSimKmh = moveTowardRateLimited(lastWheelSimKmh, desiredKmh, maxAccel * dt, maxDecel * dt);
+        lastWheelSimKmh = clamp(lastWheelSimKmh, WHEEL_SPEED_MIN_KMH, WHEEL_SPEED_MAX_KMH);
+        return lastWheelSimKmh;
+    }
+
+    private static double moveTowardRateLimited(double cur, double target, double maxUp, double maxDown) {
+        double d = target - cur;
+        if (d >= 0.0) {
+            double step = Math.min(d, Math.max(0.0, maxUp));
+            return cur + step;
+        } else {
+            double step = Math.max(d, -Math.max(0.0, maxDown));
+            return cur + step;
+        }
     }
 
     public WheelSpeedReading[] buildWheelSpeedReadings(WorldState world) {
@@ -227,6 +272,7 @@ public final class SimulatedSensors {
         double decelKmhPerS = updateLongitudinalDeceleration(t, egoKmh);
 
         double vKmh = simulatedWheelSpeedKmh(world);
+        world.setLastWheelSpeedFeedback(world.simTimeS(), vKmh);
         double speedMps = vKmh / 3.6;
 
         // RPM = (linear speed / circumference) * 60

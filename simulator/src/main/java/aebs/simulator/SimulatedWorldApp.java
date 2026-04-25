@@ -4,6 +4,7 @@ import aebs.simulator.faults.PerceptionFaultInjector;
 import aebs.simulator.model.Vec2;
 import aebs.simulator.perception.CameraReading;
 import aebs.simulator.perception.RadarReading;
+import aebs.simulator.perception.RedundantSensorFusion;
 import aebs.simulator.perception.SimulatedSensors;
 import aebs.simulator.perception.VehiclePerceptionSystem;
 import aebs.simulator.perception.WheelSpeedReading;
@@ -49,10 +50,14 @@ public final class SimulatedWorldApp {
         );
 
         Random rng = new Random(20260415L);
-        SimulatedSensors sensors = new SimulatedSensors(pxPerMeter, /* wheelRadiusM */ 0.30, rng.nextLong());
-        PerceptionFaultInjector faults = new PerceptionFaultInjector(rng.nextLong());
+        // Redundant sensor chains (A + B) for single-failure tolerance.
+        SimulatedSensors sensorsA = new SimulatedSensors(pxPerMeter, /* wheelRadiusM */ 0.30, rng.nextLong());
+        SimulatedSensors sensorsB = new SimulatedSensors(pxPerMeter, /* wheelRadiusM */ 0.30, rng.nextLong());
+        PerceptionFaultInjector faultsA = new PerceptionFaultInjector(rng.nextLong());
+        PerceptionFaultInjector faultsB = new PerceptionFaultInjector(rng.nextLong());
 
-        SimPanel panel = new SimPanel(world, scenario, sensors, /* fps */ 60);
+        // Control loop uses chain A for HUD/logic; perception output is fused A+B.
+        SimPanel panel = new SimPanel(world, scenario, sensorsA, /* fps */ 60);
 
         JFrame frame = new JFrame("AEBS Simulator (animated blocks)");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -80,9 +85,12 @@ public final class SimulatedWorldApp {
         final long[] lastCameraMs = {0L};
         final long[] lastRadarMs = {0L};
 
-        final RadarReading[][] radar = {new RadarReading[0]};
-        final CameraReading[][] camera = {new CameraReading[0]};
-        final WheelSpeedReading[][] wheel = {new WheelSpeedReading[0]};
+        final RadarReading[][] radarA = {new RadarReading[0]};
+        final RadarReading[][] radarB = {new RadarReading[0]};
+        final CameraReading[][] cameraA = {new CameraReading[0]};
+        final CameraReading[][] cameraB = {new CameraReading[0]};
+        final WheelSpeedReading[][] wheelA = {new WheelSpeedReading[0]};
+        final WheelSpeedReading[][] wheelB = {new WheelSpeedReading[0]};
 
         Timer sensorTimer = new Timer(wheelPeriodMs, e -> {
             double t = panel.simTimeS();
@@ -90,24 +98,33 @@ public final class SimulatedWorldApp {
             long nowMs = System.currentTimeMillis();
 
             if (nowMs - lastWheelMs[0] >= wheelPeriodMs) {
-                wheel[0] = sensors.buildWheelSpeedReadings(panel.world());
-                wheel[0] = faults.applyWheel(t, wheel[0]);
+                wheelA[0] = sensorsA.buildWheelSpeedReadings(panel.world());
+                wheelA[0] = faultsA.applyWheel(t, wheelA[0]);
+                wheelB[0] = sensorsB.buildWheelSpeedReadings(panel.world());
+                wheelB[0] = faultsB.applyWheel(t, wheelB[0]);
                 lastWheelMs[0] = nowMs;
             }
 
             if (nowMs - lastCameraMs[0] >= cameraPeriodMs) {
-                camera[0] = sensors.buildCameraReadings(panel.world());
-                camera[0] = faults.applyCamera(t, camera[0]);
+                cameraA[0] = sensorsA.buildCameraReadings(panel.world());
+                cameraA[0] = faultsA.applyCamera(t, cameraA[0]);
+                cameraB[0] = sensorsB.buildCameraReadings(panel.world());
+                cameraB[0] = faultsB.applyCamera(t, cameraB[0]);
                 lastCameraMs[0] = nowMs;
             }
 
             if (nowMs - lastRadarMs[0] >= radarPeriodMs) {
-                radar[0] = sensors.buildRadarReadings(panel.world());
-                radar[0] = faults.applyRadar(t, radar[0]);
+                radarA[0] = sensorsA.buildRadarReadings(panel.world());
+                radarA[0] = faultsA.applyRadar(t, radarA[0]);
+                radarB[0] = sensorsB.buildRadarReadings(panel.world());
+                radarB[0] = faultsB.applyRadar(t, radarB[0]);
                 lastRadarMs[0] = nowMs;
             }
 
-            perception.updateAllSensors(radar[0], camera[0], wheel[0]);
+            RadarReading[] radarF = RedundantSensorFusion.fuseRadar(radarA[0], radarB[0]);
+            CameraReading[] camF = RedundantSensorFusion.fuseCamera(cameraA[0], cameraB[0]);
+            WheelSpeedReading[] wheelF = RedundantSensorFusion.fuseWheel(wheelA[0], wheelB[0]);
+            perception.updateAllSensors(radarF, camF, wheelF);
 
             System.out.println(formatPerception(perception, t, panel.world()));
         });
@@ -132,8 +149,10 @@ public final class SimulatedWorldApp {
         ScenarioEngine scenario = new ScenarioEngine(20260415L, w / 2.0, -90);
 
         Random rng = new Random(20260415L);
-        SimulatedSensors sensors = new SimulatedSensors(pxPerMeter, 0.30, rng.nextLong());
-        PerceptionFaultInjector faults = new PerceptionFaultInjector(rng.nextLong());
+        SimulatedSensors sensorsA = new SimulatedSensors(pxPerMeter, 0.30, rng.nextLong());
+        SimulatedSensors sensorsB = new SimulatedSensors(pxPerMeter, 0.30, rng.nextLong());
+        PerceptionFaultInjector faultsA = new PerceptionFaultInjector(rng.nextLong());
+        PerceptionFaultInjector faultsB = new PerceptionFaultInjector(rng.nextLong());
 
         VehiclePerceptionSystem perception = new VehiclePerceptionSystem(
                 new RadarReading[0],
@@ -147,9 +166,12 @@ public final class SimulatedWorldApp {
         double cameraAcc = 0.0;
         double radarAcc = 0.0;
 
-        RadarReading[] radar = new RadarReading[0];
-        CameraReading[] camera = new CameraReading[0];
-        WheelSpeedReading[] wheel = new WheelSpeedReading[0];
+        RadarReading[] radarA = new RadarReading[0];
+        RadarReading[] radarB = new RadarReading[0];
+        CameraReading[] cameraA = new CameraReading[0];
+        CameraReading[] cameraB = new CameraReading[0];
+        WheelSpeedReading[] wheelA = new WheelSpeedReading[0];
+        WheelSpeedReading[] wheelB = new WheelSpeedReading[0];
 
         for (int i = 0; i < 2000; i++) { // 20s
             t += dt;
@@ -161,19 +183,25 @@ public final class SimulatedWorldApp {
             radarAcc += dt;
 
             if (wheelAcc >= 0.010) {
-                wheel = faults.applyWheel(t, sensors.buildWheelSpeedReadings(world));
+                wheelA = faultsA.applyWheel(t, sensorsA.buildWheelSpeedReadings(world));
+                wheelB = faultsB.applyWheel(t, sensorsB.buildWheelSpeedReadings(world));
                 wheelAcc = 0.0;
             }
             if (cameraAcc >= 0.050) {
-                camera = faults.applyCamera(t, sensors.buildCameraReadings(world));
+                cameraA = faultsA.applyCamera(t, sensorsA.buildCameraReadings(world));
+                cameraB = faultsB.applyCamera(t, sensorsB.buildCameraReadings(world));
                 cameraAcc = 0.0;
             }
             if (radarAcc >= 0.100) {
-                radar = faults.applyRadar(t, sensors.buildRadarReadings(world));
+                radarA = faultsA.applyRadar(t, sensorsA.buildRadarReadings(world));
+                radarB = faultsB.applyRadar(t, sensorsB.buildRadarReadings(world));
                 radarAcc = 0.0;
             }
 
-            perception.updateAllSensors(radar, camera, wheel);
+            RadarReading[] radarF = RedundantSensorFusion.fuseRadar(radarA, radarB);
+            CameraReading[] camF = RedundantSensorFusion.fuseCamera(cameraA, cameraB);
+            WheelSpeedReading[] wheelF = RedundantSensorFusion.fuseWheel(wheelA, wheelB);
+            perception.updateAllSensors(radarF, camF, wheelF);
             // Headless mode has no control loop; report brakeCmd as 0.
             world.setBrakeCommand(0.0);
             System.out.println(formatPerception(perception, t, world));
