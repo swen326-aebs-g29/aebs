@@ -18,9 +18,9 @@ import java.util.Random;
  */
 public final class SimulatedSensors {
     /**
-     * Declared radar/lidar measurement envelope (metres): reported readings are simulated to fall
-     * in this band. Geometry is not clipped to these distances — true range is computed from the
-     * world, then noise is applied and the value is mapped into this envelope for output.
+     * Radar/lidar operational detection window (metres). Objects are only eligible for detection
+     * when their geometric range lies within this band, and reported readings are also constrained
+     * to this range.
      */
     public static final double RADAR_MIN_RANGE_M = 0.5;
     public static final double RADAR_MAX_RANGE_M = 200.0;
@@ -103,24 +103,18 @@ public final class SimulatedSensors {
         double dyPx = egoBox.y() - (target.y() + target.h());
         if (dyPx <= 0) return;
 
-        // True geometric range (simulation); not limited to the operational envelope.
+        // True geometric range (simulation): enforce operational detection window (0.5–200 m).
         double geomRangeM = dyPx / pxPerMeter;
+        if (geomRangeM < RADAR_MIN_RANGE_M || geomRangeM > RADAR_MAX_RANGE_M) {
+            return;
+        }
 
         double wM = target.w() / pxPerMeter;
         double hM = target.h() / pxPerMeter;
         double sizeM2 = Math.max(1e-6, wM * hM);
 
-        // Detection likelihood uses the same curve as the physical sensor spec window, without
-        // discarding geometry outside 0.5–200 m (beyond max: attenuate slightly).
-        double rangeForProb = clamp(geomRangeM, RADAR_MIN_RANGE_M, RADAR_MAX_RANGE_M);
-        double pDet = radarDetectionProbability(rangeForProb, sizeM2, env);
-        if (geomRangeM > RADAR_MAX_RANGE_M) {
-            double over = geomRangeM - RADAR_MAX_RANGE_M;
-            pDet *= clamp(1.0 - over / (RADAR_MAX_RANGE_M * 1.5), 0.06, 1.0);
-        }
-        if (geomRangeM < RADAR_MIN_RANGE_M) {
-            pDet *= 0.82;
-        }
+        // Detection likelihood within the operational window: depends on size and weather.
+        double pDet = radarDetectionProbability(geomRangeM, sizeM2, env);
         if (rng.nextDouble() > pDet) {
             return;
         }
