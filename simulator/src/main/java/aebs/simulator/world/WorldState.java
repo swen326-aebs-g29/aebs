@@ -18,6 +18,16 @@ public final class WorldState {
     /** Seconds since simulation start; drives environment and wheel-speed envelope. */
     private double simTimeS = 0.0;
 
+    /** Brake control command (0..1). 0 = no brake, 1 = full brake. */
+    private double brakeCommand = 0.0;
+
+    /** Latest wheel-speed feedback (km/h) and its corresponding simulation time. */
+    private double lastWheelSpeedKmh = 0.0;
+    private double lastWheelSpeedSimTimeS = -1.0;
+
+    /** Escalated driver alert (latched) when braking cannot be verified after corrective attempts. */
+    private boolean driverBrakeAlert = false;
+
     public WorldState(double width, double height, CarBlock ego) {
         this.width = width;
         this.height = height;
@@ -29,6 +39,23 @@ public final class WorldState {
     public void setSimTimeS(double simTimeS) {
         this.simTimeS = Math.max(0.0, simTimeS);
     }
+
+    public double brakeCommand() { return brakeCommand; }
+
+    public void setBrakeCommand(double brakeCommand) {
+        this.brakeCommand = clamp01(brakeCommand);
+    }
+
+    public double lastWheelSpeedKmh() { return lastWheelSpeedKmh; }
+    public double lastWheelSpeedSimTimeS() { return lastWheelSpeedSimTimeS; }
+
+    public void setLastWheelSpeedFeedback(double simTimeS, double kmh) {
+        this.lastWheelSpeedSimTimeS = simTimeS;
+        this.lastWheelSpeedKmh = Math.max(0.0, kmh);
+    }
+
+    public boolean driverBrakeAlert() { return driverBrakeAlert; }
+    public void setDriverBrakeAlert(boolean v) { this.driverBrakeAlert = v; }
 
     public double width() { return width; }
     public double height() { return height; }
@@ -63,6 +90,10 @@ public final class WorldState {
     public double egoSpeedPixelsPerSec() {
         Vec2 v = ego.vel();
         return Math.hypot(v.x(), v.y());
+    }
+
+    private static double clamp01(double v) {
+        return Math.max(0.0, Math.min(1.0, v));
     }
 }
 

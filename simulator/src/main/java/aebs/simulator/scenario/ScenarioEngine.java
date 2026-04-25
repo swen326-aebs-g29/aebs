@@ -130,7 +130,8 @@ public final class ScenarioEngine {
         double roadLeft = w.width() / 2.0 - 110.0;
         double roadRight = w.width() / 2.0 + 110.0;
         CarBlock ego = w.ego();
-        final double margin = 3.0;
+        // Keep a small visual/physical buffer so ego isn't "door-to-door" after a pass.
+        final double margin = 14.0;
 
         for (int iter = 0; iter < 8; iter++) {
             boolean any = false;

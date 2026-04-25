@@ -46,21 +46,46 @@ public final class SimPanel extends JPanel {
     /** px/m in {@link aebs.simulator.SimulatedWorldApp} — geometric thresholds match radar distances without RNG misses. */
     private static final double PX_PER_M = 10.0;
     /** Count obstacles slightly outside the ego lane when estimating forward clearance. */
-    private static final double CLEARANCE_X_INFLATION_PX = 32.0;
+    private static final double CLEARANCE_X_INFLATION_PX = 40.0;
     /** Extra lateral space when deciding if an NPC/ped is “in your path” (wider pass). */
-    private static final double PASS_SIDE_MARGIN_PX = 22.0;
+    private static final double PASS_SIDE_MARGIN_PX = 36.0;
     /** Nudge escape targets further toward the left/right inside the road for a side gap. */
-    private static final double ESCAPE_SHOULDER_OFFSET_PX = 18.0;
+    private static final double ESCAPE_SHOULDER_OFFSET_PX = 28.0;
     /** Treat forward gap as smaller so swerve/brake start with more room to the obstacle. */
-    private static final double FORWARD_PASS_BUFFER_PX = 45.0;
+    private static final double FORWARD_PASS_BUFFER_PX = 70.0;
     private static final double GEO_EARLY_CLEARANCE_PX = EARLY_DIST_M * PX_PER_M;
     private static final double GEO_IMMINENT_CLEARANCE_PX = IMMINENT_DIST_M * PX_PER_M;
     /** Below this gap, scale down forward speed (still swerve when {@code avoid} is true). */
     private static final double BRAKE_CLEARANCE_PX = 260.0;
+    /** Hard minimum lateral separation (pixels) from cars/pedestrians when side-by-side. */
+    private static final double HARD_GAP_PX = 22.0;
+    /** Only enforce gap against obstacles within this vertical band around ego (pixels). */
+    private static final double HARD_GAP_Y_PAD_PX = 70.0;
+    /** Cap how fast desiredX can change due to hard-gap (px/s). */
+    private static final double HARD_GAP_MAX_SHIFT_PX_S = 140.0;
+    /** Additional smoothing on desiredX near obstacles (px/s). */
+    private static final double DESIRED_X_MAX_STEP_PX_S = 110.0;
 
     private double desiredEgoX;
+    private double filteredDesiredEgoX;
     private double holdAvoidUntilS = 0.0;
     private final double egoAnchorY;
+    private double holdBrakeUntilS = 0.0;
+
+    // Brake supervisor: enforce periodic commands, verification via wheel feedback, corrective attempts, alert.
+    private static final double BRAKE_SIGNAL_PERIOD_S = 0.05;     // at least every 50ms
+    private static final double BRAKE_VERIFY_WITHIN_S = 0.05;     // verify within 50ms
+    private static final double BRAKE_EXEC_MARGIN = 0.05;         // ±5%
+    private static final int BRAKE_MAX_CORRECTIVE_ATTEMPTS = 2;
+
+    private double lastBrakeSignalSentS = -1.0;
+    private double lastBrakeCmdAtSend = 0.0;
+    private double wheelKmhAtSend = 0.0;
+    private boolean awaitingBrakeVerification = false;
+    private int correctiveBrakeFailures = 0;
+
+    private double brakeOverrideUntilS = 0.0;
+    private double brakeOverrideCmd = 0.0;
 
     // Ego forward speed (negative Y is "up" the screen).
     private static final double EGO_FORWARD_SPEED_PX_S = -45.0;
@@ -88,6 +113,7 @@ public final class SimPanel extends JPanel {
         timer.start();
 
         desiredEgoX = centerX();
+        filteredDesiredEgoX = desiredEgoX;
         egoAnchorY = world.ego().pos().y();
     }
 
@@ -122,6 +148,10 @@ public final class SimPanel extends JPanel {
             if (collision) {
                 world.ego().setCollided(true);
                 world.firstCollisionWithEgo().ifPresent(n -> n.setCollided(true));
+                // Emergency brake on impact: stop longitudinal motion for a short hold window.
+                holdBrakeUntilS = simTimeS + 0.9;
+                world.setBrakeCommand(1.0);
+                world.ego().setVel(new Vec2(0.0, 0.0));
             } else {
                 world.ego().setCollided(false);
                 for (CarBlock npc : world.npcs()) npc.setCollided(false);
@@ -158,14 +188,214 @@ public final class SimPanel extends JPanel {
         }
 
         // Keep ego within road bounds to avoid "teleporting" outside the lane.
-        desiredEgoX = clamp(desiredEgoX, roadLeftPx(), roadRightPx() - ego.aabb().w());
+        double rawDesiredX = clamp(desiredEgoX, roadLeftPx(), roadRightPx() - ego.aabb().w());
+        rawDesiredX = enforceHardMinimumLateralGap(rawDesiredX, dt);
+
+        // Smooth target changes to prevent chatter near constraints.
+        filteredDesiredEgoX = moveToward(filteredDesiredEgoX, rawDesiredX, DESIRED_X_MAX_STEP_PX_S * dt);
+        filteredDesiredEgoX = clamp(filteredDesiredEgoX, roadLeftPx(), roadRightPx() - ego.aabb().w());
+        // Ensure safety after smoothing (projection is stable; no extra rate limit here).
+        filteredDesiredEgoX = enforceHardMinimumLateralGap(filteredDesiredEgoX, dt);
+        desiredEgoX = filteredDesiredEgoX;
 
         double err = desiredEgoX - ego.pos().x();
         double vx = clamp(err * LATERAL_KP, -MAX_LATERAL_SPEED_PX_S, MAX_LATERAL_SPEED_PX_S);
 
         double clearance = clearanceAheadPx(ego.pos().x());
         double speedFactor = forwardSpeedFactor(clearance);
-        ego.setVel(new Vec2(vx, EGO_FORWARD_SPEED_PX_S * speedFactor));
+
+        boolean emergencyHold = simTimeS < holdBrakeUntilS;
+        double plannedBrakeCmd = emergencyHold ? 1.0 : (1.0 - speedFactor);
+
+        // Apply any corrective override requested by brake supervisor.
+        if (simTimeS >= brakeOverrideUntilS) {
+            brakeOverrideCmd = 0.0;
+        }
+        double effectiveBrakeCmd = Math.max(plannedBrakeCmd, brakeOverrideCmd);
+        effectiveBrakeCmd = clamp(effectiveBrakeCmd, 0.0, 1.0);
+        double effectiveSpeedFactor = clamp(1.0 - effectiveBrakeCmd, 0.0, 1.0);
+
+        world.setBrakeCommand(effectiveBrakeCmd);
+        superviseBraking(effectiveBrakeCmd);
+
+        // Reverted: longitudinal speed snaps to target factor (brakeCmd still published).
+        double vy = emergencyHold ? 0.0 : (EGO_FORWARD_SPEED_PX_S * effectiveSpeedFactor);
+        ego.setVel(new Vec2(vx, vy));
+    }
+
+    /**
+     * Ensures the ego keeps a minimum side gap to nearby objects (cars + pedestrians) when
+     * they are roughly alongside in Y. This prevents "door-to-door" passes even if the planner
+     * chose a lane that technically avoids intersection.
+     */
+    private double enforceHardMinimumLateralGap(double candidateLeftX) {
+        Aabb egoBox = world.ego().aabb();
+        double egoW = egoBox.w();
+        double yMin = egoBox.y() - HARD_GAP_Y_PAD_PX;
+        double yMax = egoBox.y() + egoBox.h() + HARD_GAP_Y_PAD_PX;
+
+        double roadLeft = roadLeftPx();
+        double roadRight = roadRightPx() - egoW;
+
+        double x = clamp(candidateLeftX, roadLeft, roadRight);
+
+        // Build forbidden x-intervals for egoLeftX such that ego would violate the side gap.
+        // Ego is allowed when (egoRight <= oLeft-gap) OR (egoLeft >= oRight+gap).
+        // Therefore forbidden is (oLeft-gap-egoW, oRight+gap).
+        Interval[] tmp = new Interval[world.npcs().size() + world.pedestrians().size()];
+        int k = 0;
+
+        for (CarBlock npc : world.npcs()) {
+            Aabb o = npc.aabb();
+            if ((o.y() > yMax) || (o.y() + o.h() < yMin)) continue;
+            double lo = (o.x() - HARD_GAP_PX - egoW);
+            double hi = (o.x() + o.w() + HARD_GAP_PX);
+            tmp[k++] = new Interval(lo, hi);
+        }
+        for (PedestrianBlock p : world.pedestrians()) {
+            Aabb o = p.aabb();
+            if ((o.y() > yMax) || (o.y() + o.h() < yMin)) continue;
+            double lo = (o.x() - HARD_GAP_PX - egoW);
+            double hi = (o.x() + o.w() + HARD_GAP_PX);
+            tmp[k++] = new Interval(lo, hi);
+        }
+
+        if (k == 0) return x;
+
+        // Clamp forbidden intervals to the drivable domain.
+        for (int i = 0; i < k; i++) {
+            Interval in = tmp[i];
+            double lo = clamp(in.lo, roadLeft, roadRight);
+            double hi = clamp(in.hi, roadLeft, roadRight);
+            tmp[i] = new Interval(Math.min(lo, hi), Math.max(lo, hi));
+        }
+
+        Interval[] merged = mergeIntervals(tmp, k);
+
+        // If x is inside any forbidden interval, project it to the nearest boundary.
+        double projected = projectOutOfForbidden(x, merged);
+        if (Math.abs(projected - x) < 1e-6) return x;
+
+        // Rate limit the correction to avoid oscillation.
+        double maxShift = HARD_GAP_MAX_SHIFT_PX_S * Math.max(0.0, dtSeconds);
+        double dx = clamp(projected - x, -maxShift, maxShift);
+        return clamp(x + dx, roadLeft, roadRight);
+    }
+
+    private double enforceHardMinimumLateralGap(double candidateLeftX, double dtSeconds) {
+        // wrapper so we can rate-limit based on dt
+        this.dtSeconds = dtSeconds;
+        return enforceHardMinimumLateralGap(candidateLeftX);
+    }
+
+    // Stored per-call to allow dt-based cap without threading dt through all helpers.
+    private double dtSeconds = 0.016;
+
+    private static double moveToward(double cur, double target, double maxStep) {
+        if (maxStep <= 0) return cur;
+        double d = target - cur;
+        if (Math.abs(d) <= maxStep) return target;
+        return cur + Math.signum(d) * maxStep;
+    }
+
+    private record Interval(double lo, double hi) {}
+
+    private static Interval[] mergeIntervals(Interval[] in, int n) {
+        // Simple insertion sort by lo (n is tiny in this sim).
+        for (int i = 1; i < n; i++) {
+            Interval key = in[i];
+            int j = i - 1;
+            while (j >= 0 && in[j].lo > key.lo) {
+                in[j + 1] = in[j];
+                j--;
+            }
+            in[j + 1] = key;
+        }
+
+        Interval[] out = new Interval[n];
+        int k = 0;
+        Interval cur = in[0];
+        for (int i = 1; i < n; i++) {
+            Interval nx = in[i];
+            if (nx.lo <= cur.hi) {
+                cur = new Interval(cur.lo, Math.max(cur.hi, nx.hi));
+            } else {
+                out[k++] = cur;
+                cur = nx;
+            }
+        }
+        out[k++] = cur;
+
+        Interval[] trimmed = new Interval[k];
+        System.arraycopy(out, 0, trimmed, 0, k);
+        return trimmed;
+    }
+
+    private static double projectOutOfForbidden(double x, Interval[] forbidden) {
+        for (Interval f : forbidden) {
+            if (x >= f.lo && x <= f.hi) {
+                double toLo = Math.abs(x - f.lo);
+                double toHi = Math.abs(f.hi - x);
+                return (toLo <= toHi) ? f.lo : f.hi;
+            }
+        }
+        return x;
+    }
+
+    private void superviseBraking(double brakeCmd) {
+        boolean activeBraking = brakeCmd > 0.02;
+        if (!activeBraking) {
+            awaitingBrakeVerification = false;
+            correctiveBrakeFailures = 0;
+            world.setDriverBrakeAlert(false);
+            return;
+        }
+
+        // Send a brake control "signal" at least every 50ms (we model this as updating the command).
+        if (lastBrakeSignalSentS < 0.0 || (simTimeS - lastBrakeSignalSentS) >= BRAKE_SIGNAL_PERIOD_S) {
+            lastBrakeSignalSentS = simTimeS;
+            lastBrakeCmdAtSend = brakeCmd;
+            wheelKmhAtSend = world.lastWheelSpeedKmh();
+            awaitingBrakeVerification = true;
+        }
+
+        // Verify brake activation via sensor feedback within 50ms of sending the command.
+        if (awaitingBrakeVerification && (simTimeS - lastBrakeSignalSentS) >= BRAKE_VERIFY_WITHIN_S) {
+            // Require feedback sample that is at/after the command time (or very close).
+            if (world.lastWheelSpeedSimTimeS() < (lastBrakeSignalSentS - 1e-6)) {
+                // No feedback yet; keep waiting (next tick still satisfies "within 50ms" in this sim loop).
+                return;
+            }
+
+            double dt = BRAKE_VERIFY_WITHIN_S;
+            double expectedDrop = SimulatedSensors.WHEEL_EXPECTED_DECEL_FULL_BRAKE_KMH_S * lastBrakeCmdAtSend * dt;
+            expectedDrop = Math.max(0.0, expectedDrop);
+            double actualDrop = wheelKmhAtSend - world.lastWheelSpeedKmh();
+
+            boolean ok;
+            if (expectedDrop < 1e-6) {
+                ok = true;
+            } else {
+                double ratio = actualDrop / expectedDrop;
+                ok = ratio >= (1.0 - BRAKE_EXEC_MARGIN) && ratio <= (1.0 + BRAKE_EXEC_MARGIN);
+            }
+
+            awaitingBrakeVerification = false;
+            if (ok) {
+                correctiveBrakeFailures = 0;
+                world.setDriverBrakeAlert(false);
+            } else {
+                correctiveBrakeFailures++;
+                if (correctiveBrakeFailures <= BRAKE_MAX_CORRECTIVE_ATTEMPTS) {
+                    // Corrective attempt: command stronger braking for a short window.
+                    brakeOverrideCmd = 1.0;
+                    brakeOverrideUntilS = simTimeS + 0.25;
+                } else {
+                    // Escalate an alert to the driver.
+                    world.setDriverBrakeAlert(true);
+                }
+            }
+        }
     }
 
     /** Ground-truth forward gap along current lateral position (cars + pedestrians), no sensor dropout. */
@@ -397,6 +627,11 @@ public final class SimPanel extends JPanel {
         if (collision) {
             g2.setColor(new Color(255, 90, 90));
             g2.drawString("COLLISION", 10, subY);
+            subY += 18;
+        }
+        if (world.driverBrakeAlert()) {
+            g2.setColor(new Color(255, 120, 120));
+            g2.drawString("ALERT: braking not verified (wheel feedback)", 10, subY);
             subY += 18;
         }
         if (sensors.severeDecelerationTractionConcern()) {

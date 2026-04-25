@@ -109,7 +109,7 @@ public final class SimulatedWorldApp {
 
             perception.updateAllSensors(radar[0], camera[0], wheel[0]);
 
-            System.out.println(formatPerception(perception, t));
+            System.out.println(formatPerception(perception, t, panel.world()));
         });
         sensorTimer.setCoalesce(true);
         sensorTimer.start();
@@ -174,11 +174,13 @@ public final class SimulatedWorldApp {
             }
 
             perception.updateAllSensors(radar, camera, wheel);
-            System.out.println(formatPerception(perception, t));
+            // Headless mode has no control loop; report brakeCmd as 0.
+            world.setBrakeCommand(0.0);
+            System.out.println(formatPerception(perception, t, world));
         }
     }
 
-    private static String formatPerception(VehiclePerceptionSystem p, double tS) {
+    private static String formatPerception(VehiclePerceptionSystem p, double tS, WorldState world) {
         RadarReading[] r = p.getRadarReadings();
         CameraReading[] c = p.getCameraReadings();
         WheelSpeedReading[] w = p.getWheelSpeedReadings();
@@ -186,7 +188,7 @@ public final class SimulatedWorldApp {
         String r0 = r.length == 0 ? "" : String.format("%.2fm@%s", r[0].distanceMetres(), r[0].speedObject());
         double rpm0 = w.length == 0 || w[0].rpm() == null ? 0.0 : w[0].rpm();
 
-        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f",
-                tS, r.length, r0, c.length, w.length, rpm0);
+        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s",
+                tS, r.length, r0, c.length, w.length, rpm0, world.brakeCommand(), world.driverBrakeAlert() ? "YES" : "NO");
     }
 }
