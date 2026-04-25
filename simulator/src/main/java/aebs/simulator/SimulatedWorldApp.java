@@ -223,8 +223,9 @@ public final class SimulatedWorldApp {
         String r0 = r.length == 0 ? "" : String.format("%.2fm@%s", r[0].distanceMetres(), r[0].speedObject());
         double rpm0 = w.length == 0 || w[0].rpm() == null ? 0.0 : w[0].rpm();
 
-        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s sensorHealth=%s",
+        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s sensorHealth=%s failSafe=%s",
                 tS, r.length, r0, c.length, w.length, rpm0, world.brakeCommand(), world.driverBrakeAlert() ? "YES" : "NO",
-                (h == null || h.ok()) ? "OK" : h.summary());
+                (h == null || h.ok()) ? "OK" : h.summary(),
+                world.failSafeActive() ? world.failSafeReason() : "NO");
     }
 }

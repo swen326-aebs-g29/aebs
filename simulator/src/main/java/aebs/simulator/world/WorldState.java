@@ -32,6 +32,10 @@ public final class WorldState {
     private boolean sensorsHealthy = true;
     private String sensorHealthSummary = "OK";
 
+    /** Fail-safe state when normal operation is degraded. */
+    private boolean failSafeActive = false;
+    private String failSafeReason = "";
+
     public WorldState(double width, double height, CarBlock ego) {
         this.width = width;
         this.height = height;
@@ -67,6 +71,14 @@ public final class WorldState {
     public void setSensorHealth(boolean ok, String summary) {
         this.sensorsHealthy = ok;
         this.sensorHealthSummary = (summary == null || summary.isBlank()) ? (ok ? "OK" : "FAULT") : summary;
+    }
+
+    public boolean failSafeActive() { return failSafeActive; }
+    public String failSafeReason() { return failSafeReason; }
+
+    public void setFailSafe(boolean active, String reason) {
+        this.failSafeActive = active;
+        this.failSafeReason = (reason == null) ? "" : reason;
     }
 
     public double width() { return width; }

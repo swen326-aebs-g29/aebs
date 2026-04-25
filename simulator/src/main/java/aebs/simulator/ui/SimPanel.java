@@ -89,6 +89,7 @@ public final class SimPanel extends JPanel {
 
     // Hazard fallback when sensors are unhealthy: brake and hold a short time.
     private double hazardHoldUntilS = 0.0;
+    private double failSafeHoldUntilS = 0.0;
 
     // Ego forward speed (negative Y is "up" the screen).
     private static final double EGO_FORWARD_SPEED_PX_S = -45.0;
@@ -210,12 +211,22 @@ public final class SimPanel extends JPanel {
         boolean emergencyHold = simTimeS < holdBrakeUntilS;
         double plannedBrakeCmd = emergencyHold ? 1.0 : (1.0 - speedFactor);
 
-        // Fault-tolerant hazard management: if sensors are unhealthy, prefer a safe brake hold.
-        if (!world.sensorsHealthy()) {
+        // Fail-safe mechanisms: if normal operation is degraded, prefer a safe brake hold and center.
+        boolean sensorFault = !world.sensorsHealthy();
+        boolean brakeFault = world.driverBrakeAlert();
+        if (sensorFault) {
             hazardHoldUntilS = Math.max(hazardHoldUntilS, simTimeS + 0.6);
         }
+        if (brakeFault) {
+            failSafeHoldUntilS = Math.max(failSafeHoldUntilS, simTimeS + 1.2);
+        }
+
         boolean hazardHold = simTimeS < hazardHoldUntilS;
-        if (hazardHold) {
+        boolean failSafeHold = simTimeS < failSafeHoldUntilS;
+        boolean degraded = hazardHold || failSafeHold;
+        world.setFailSafe(degraded, failSafeHold ? "brake_unverified" : (hazardHold ? "sensor_fault" : ""));
+
+        if (degraded) {
             plannedBrakeCmd = 1.0;
             // When degraded, stop trying to swerve aggressively; stay near center.
             desiredEgoX = moveToward(desiredEgoX, centerX, 60.0 * dt);
@@ -651,6 +662,11 @@ public final class SimPanel extends JPanel {
         if (!world.sensorsHealthy()) {
             g2.setColor(new Color(255, 170, 90));
             g2.drawString("SENSOR FAULT: " + world.sensorHealthSummary(), 10, subY);
+            subY += 18;
+        }
+        if (world.failSafeActive()) {
+            g2.setColor(new Color(255, 210, 120));
+            g2.drawString("FAIL-SAFE ACTIVE: " + world.failSafeReason(), 10, subY);
             subY += 18;
         }
         if (sensors.severeDecelerationTractionConcern()) {
