@@ -28,6 +28,10 @@ public final class WorldState {
     /** Escalated driver alert (latched) when braking cannot be verified after corrective attempts. */
     private boolean driverBrakeAlert = false;
 
+    /** Latest fused sensor health status from the perception pipeline. */
+    private boolean sensorsHealthy = true;
+    private String sensorHealthSummary = "OK";
+
     public WorldState(double width, double height, CarBlock ego) {
         this.width = width;
         this.height = height;
@@ -56,6 +60,14 @@ public final class WorldState {
 
     public boolean driverBrakeAlert() { return driverBrakeAlert; }
     public void setDriverBrakeAlert(boolean v) { this.driverBrakeAlert = v; }
+
+    public boolean sensorsHealthy() { return sensorsHealthy; }
+    public String sensorHealthSummary() { return sensorHealthSummary; }
+
+    public void setSensorHealth(boolean ok, String summary) {
+        this.sensorsHealthy = ok;
+        this.sensorHealthSummary = (summary == null || summary.isBlank()) ? (ok ? "OK" : "FAULT") : summary;
+    }
 
     public double width() { return width; }
     public double height() { return height; }

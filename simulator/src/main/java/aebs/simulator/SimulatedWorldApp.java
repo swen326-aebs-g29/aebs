@@ -129,6 +129,7 @@ public final class SimulatedWorldApp {
             perception.updateAllSensors(radarF, camF, wheelF);
 
             SensorHealthMonitor.Health healthStatus = health.evaluate(t, radarF, camF, wheelF);
+            panel.world().setSensorHealth(healthStatus.ok(), healthStatus.summary());
             System.out.println(formatPerception(perception, t, panel.world(), healthStatus));
         });
         sensorTimer.setCoalesce(true);
@@ -209,6 +210,7 @@ public final class SimulatedWorldApp {
             // Headless mode has no control loop; report brakeCmd as 0.
             world.setBrakeCommand(0.0);
             SensorHealthMonitor.Health healthStatus = health.evaluate(t, radarF, camF, wheelF);
+            world.setSensorHealth(healthStatus.ok(), healthStatus.summary());
             System.out.println(formatPerception(perception, t, world, healthStatus));
         }
     }

@@ -87,6 +87,9 @@ public final class SimPanel extends JPanel {
     private double brakeOverrideUntilS = 0.0;
     private double brakeOverrideCmd = 0.0;
 
+    // Hazard fallback when sensors are unhealthy: brake and hold a short time.
+    private double hazardHoldUntilS = 0.0;
+
     // Ego forward speed (negative Y is "up" the screen).
     private static final double EGO_FORWARD_SPEED_PX_S = -45.0;
 
@@ -206,6 +209,17 @@ public final class SimPanel extends JPanel {
 
         boolean emergencyHold = simTimeS < holdBrakeUntilS;
         double plannedBrakeCmd = emergencyHold ? 1.0 : (1.0 - speedFactor);
+
+        // Fault-tolerant hazard management: if sensors are unhealthy, prefer a safe brake hold.
+        if (!world.sensorsHealthy()) {
+            hazardHoldUntilS = Math.max(hazardHoldUntilS, simTimeS + 0.6);
+        }
+        boolean hazardHold = simTimeS < hazardHoldUntilS;
+        if (hazardHold) {
+            plannedBrakeCmd = 1.0;
+            // When degraded, stop trying to swerve aggressively; stay near center.
+            desiredEgoX = moveToward(desiredEgoX, centerX, 60.0 * dt);
+        }
 
         // Apply any corrective override requested by brake supervisor.
         if (simTimeS >= brakeOverrideUntilS) {
@@ -632,6 +646,11 @@ public final class SimPanel extends JPanel {
         if (world.driverBrakeAlert()) {
             g2.setColor(new Color(255, 120, 120));
             g2.drawString("ALERT: braking not verified (wheel feedback)", 10, subY);
+            subY += 18;
+        }
+        if (!world.sensorsHealthy()) {
+            g2.setColor(new Color(255, 170, 90));
+            g2.drawString("SENSOR FAULT: " + world.sensorHealthSummary(), 10, subY);
             subY += 18;
         }
         if (sensors.severeDecelerationTractionConcern()) {
