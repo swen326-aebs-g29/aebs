@@ -93,6 +93,12 @@ public final class WorldState {
     public void addPedestrian(PedestrianBlock p) { pedestrians.add(p); }
     public void removePedestrian(PedestrianBlock p) { pedestrians.remove(p); }
 
+    /** Clears all non-ego actors from the world. */
+    public void clearObstacles() {
+        npcs.clear();
+        pedestrians.clear();
+    }
+
     public List<CarBlock> allCars() {
         List<CarBlock> all = new ArrayList<>(1 + npcs.size());
         all.add(ego);

@@ -61,6 +61,15 @@ public final class SimulatedSensors {
         this.rng = new Random(seed);
     }
 
+    /** Resets internal simulated history (wheel envelope + decel estimate). */
+    public void reset() {
+        prevEgoSpeedKmhForDecel = -1.0;
+        prevDecelSimTimeS = -1.0;
+        lastLongitudinalDecelKmhPerS = 0.0;
+        prevWheelSimTimeS = -1.0;
+        lastWheelSimKmh = 0.0;
+    }
+
     /** Latest estimated ego longitudinal deceleration magnitude (km/h per second), non-negative. */
     public double longitudinalDecelerationKmhPerS() {
         return lastLongitudinalDecelKmhPerS;
@@ -217,6 +226,14 @@ public final class SimulatedSensors {
      * Vehicle speed (km/h) used for wheel simulation, clamped to {@link #WHEEL_SPEED_MIN_KMH}–{@link #WHEEL_SPEED_MAX_KMH}.
      */
     public double simulatedWheelSpeedKmh(WorldState world) {
+        // If the ego has collided and the simulation is frozen (simTime may not advance),
+        // force wheel speed to 0 immediately instead of sticking at the last value.
+        if (world.ego().collided()) {
+            prevWheelSimTimeS = world.simTimeS();
+            lastWheelSimKmh = 0.0;
+            return 0.0;
+        }
+
         double lateralKmh = world.egoSpeedPixelsPerSec() / pxPerMeter * 3.6;
         lateralKmh = clamp(lateralKmh, WHEEL_SPEED_MIN_KMH, WHEEL_SPEED_MAX_KMH);
 
@@ -231,9 +248,11 @@ public final class SimulatedSensors {
 
         // Apply brake to target (do not force to 0 unless crashed).
         double brake = clamp(world.brakeCommand(), 0.0, 1.0);
-        double desiredKmh = world.ego().collided()
-                ? 0.0
-                : clamp(targetKmh * (1.0 - WHEEL_BRAKE_TARGET_REDUCTION * brake), WHEEL_SPEED_MIN_KMH, WHEEL_SPEED_MAX_KMH);
+        double desiredKmh = clamp(
+                targetKmh * (1.0 - WHEEL_BRAKE_TARGET_REDUCTION * brake),
+                WHEEL_SPEED_MIN_KMH,
+                WHEEL_SPEED_MAX_KMH
+        );
 
         // Rate-limit wheel feedback so it accelerates/decelerates smoothly.
         double t = world.simTimeS();
@@ -246,7 +265,7 @@ public final class SimulatedSensors {
         if (dt <= 1e-9) return lastWheelSimKmh;
         prevWheelSimTimeS = t;
 
-        double maxDecel = WHEEL_EXPECTED_DECEL_FULL_BRAKE_KMH_S * Math.max(brake, world.ego().collided() ? 1.0 : 0.0);
+        double maxDecel = WHEEL_EXPECTED_DECEL_FULL_BRAKE_KMH_S * brake;
         double maxAccel = WHEEL_RELAX_TO_TARGET_KMH_S;
         lastWheelSimKmh = moveTowardRateLimited(lastWheelSimKmh, desiredKmh, maxAccel * dt, maxDecel * dt);
         lastWheelSimKmh = clamp(lastWheelSimKmh, WHEEL_SPEED_MIN_KMH, WHEEL_SPEED_MAX_KMH);

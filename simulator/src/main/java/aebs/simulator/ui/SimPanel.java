@@ -18,6 +18,7 @@ import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.Toolkit;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 
@@ -27,10 +28,28 @@ public final class SimPanel extends JPanel {
     private final SimulatedSensors sensors;
     private final Timer timer;
 
+    private final Vec2 initialEgoPos;
+    private final Vec2 initialEgoVel;
+
     private long lastNanos = System.nanoTime();
     private boolean paused = false;
+    private boolean frozenOnCollision = false;
     private boolean collision = false;
     private double simTimeS = 0.0;
+    private boolean brakingIndicator = false;
+
+    // AEBS controls
+    private boolean aebsEnabled = false;
+    /** 0..1 — higher = more sensitive (brakes/avoids earlier). */
+    private double aebsSensitivity = 0.55;
+
+    // Alert edge detectors (auditory alerts on rising edges).
+    private boolean prevEngaged = false;
+    private boolean prevHazard = false;
+    private boolean prevBraking = false;
+
+    // Maintenance / readiness feedback
+    private double sensorFaultSinceS = -1.0;
 
     // Avoidance behaviour: start lateral move earlier (approach), then hold through imminent window.
     private static final double LANE_HALF_WIDTH_PX = 70.0;
@@ -119,11 +138,73 @@ public final class SimPanel extends JPanel {
         desiredEgoX = centerX();
         filteredDesiredEgoX = desiredEgoX;
         egoAnchorY = world.ego().pos().y();
+
+        initialEgoPos = world.ego().pos();
+        initialEgoVel = world.ego().vel();
     }
 
     public WorldState world() { return world; }
     public boolean collision() { return collision; }
     public double simTimeS() { return simTimeS; }
+
+    public boolean aebsEnabled() { return aebsEnabled; }
+    public void setAebsEnabled(boolean v) { this.aebsEnabled = v; }
+
+    public double aebsSensitivity() { return aebsSensitivity; }
+    public void setAebsSensitivity(double v) { this.aebsSensitivity = clamp(v, 0.0, 1.0); }
+
+    public void restart() {
+        // Reset UI / time
+        paused = false;
+        frozenOnCollision = false;
+        collision = false;
+        simTimeS = 0.0;
+        lastNanos = System.nanoTime();
+
+        // Reset world state
+        world.clearObstacles();
+        world.setSimTimeS(0.0);
+        world.setBrakeCommand(0.0);
+        world.setDriverBrakeAlert(false);
+        world.setSensorHealth(true, "OK");
+        world.setFailSafe(false, "");
+
+        // Reset ego pose/vel
+        CarBlock ego = world.ego();
+        Vec2 cur = ego.pos();
+        ego.translate(initialEgoPos.x() - cur.x(), initialEgoPos.y() - cur.y());
+        ego.setVel(initialEgoVel);
+        ego.setCollided(false);
+
+        // Reset planner / holds
+        desiredEgoX = centerX();
+        filteredDesiredEgoX = desiredEgoX;
+        holdAvoidUntilS = 0.0;
+        holdBrakeUntilS = 0.0;
+        hazardHoldUntilS = 0.0;
+        failSafeHoldUntilS = 0.0;
+        sensorFaultSinceS = -1.0;
+
+        // Reset alerts and brake supervisor state
+        prevEngaged = false;
+        prevHazard = false;
+        prevBraking = false;
+        brakingIndicator = false;
+        lastBrakeSignalSentS = -1.0;
+        lastBrakeCmdAtSend = 0.0;
+        wheelKmhAtSend = 0.0;
+        awaitingBrakeVerification = false;
+        correctiveBrakeFailures = 0;
+        brakeOverrideUntilS = 0.0;
+        brakeOverrideCmd = 0.0;
+
+        // Reset scenario + sensors internal state
+        scenario.reset();
+        sensors.reset();
+
+        repaint();
+        requestFocusInWindow();
+    }
 
     private void tick() {
         long now = System.nanoTime();
@@ -131,7 +212,7 @@ public final class SimPanel extends JPanel {
         lastNanos = now;
         dt = Math.max(0.0, Math.min(0.05, dt));
 
-        if (!paused) {
+        if (!paused && !frozenOnCollision) {
             simTimeS += dt;
             world.setSimTimeS(simTimeS);
             updateEgo(dt);
@@ -152,10 +233,10 @@ public final class SimPanel extends JPanel {
             if (collision) {
                 world.ego().setCollided(true);
                 world.firstCollisionWithEgo().ifPresent(n -> n.setCollided(true));
-                // Emergency brake on impact: stop longitudinal motion for a short hold window.
-                holdBrakeUntilS = simTimeS + 0.9;
                 world.setBrakeCommand(1.0);
                 world.ego().setVel(new Vec2(0.0, 0.0));
+                paused = true;
+                frozenOnCollision = true;
             } else {
                 world.ego().setCollided(false);
                 for (CarBlock npc : world.npcs()) npc.setCollided(false);
@@ -182,8 +263,8 @@ public final class SimPanel extends JPanel {
         // Ego should remain fixed longitudinally (centered on screen), only move laterally to avoid collisions.
         double centerX = centerX();
 
-        boolean avoid = earlyThreatFromSensors() || imminentCollisionFromSensors()
-                || geometricEarlyThreat() || geometricImminentThreat();
+        boolean avoid = aebsEnabled && (earlyThreatFromSensors() || imminentCollisionFromSensors()
+                || geometricEarlyThreat() || geometricImminentThreat());
         if (avoid) {
             desiredEgoX = chooseEscapeX(centerX);
             holdAvoidUntilS = simTimeS + HOLD_AVOID_S;
@@ -207,6 +288,12 @@ public final class SimPanel extends JPanel {
 
         double clearance = clearanceAheadPx(ego.pos().x());
         double speedFactor = forwardSpeedFactor(clearance);
+
+        // If the system believes collision is imminent, command an immediate stop for a short window.
+        // This is the last line of defense before impact.
+        if (imminentCollisionFromSensors() || geometricImminentThreat()) {
+            holdBrakeUntilS = Math.max(holdBrakeUntilS, simTimeS + 0.35);
+        }
 
         boolean emergencyHold = simTimeS < holdBrakeUntilS;
         double plannedBrakeCmd = emergencyHold ? 1.0 : (1.0 - speedFactor);
@@ -246,6 +333,30 @@ public final class SimPanel extends JPanel {
         // Reverted: longitudinal speed snaps to target factor (brakeCmd still published).
         double vy = emergencyHold ? 0.0 : (EGO_FORWARD_SPEED_PX_S * effectiveSpeedFactor);
         ego.setVel(new Vec2(vx, vy));
+
+        // HUD: only flag "BRAKING: YES" when the ego is both slowing down AND moving laterally
+        // to get out of the way of obstacles.
+        boolean movingOutOfWay = Math.abs(vx) > 10.0;
+        boolean slowingNow = emergencyHold || effectiveBrakeCmd >= 0.30 || effectiveSpeedFactor < 0.95;
+        brakingIndicator = movingOutOfWay && slowingNow && !collision && !frozenOnCollision;
+
+        // Alerts (auditory + visual state)
+        boolean brakingNow = effectiveBrakeCmd > 0.05 || emergencyHold;
+        boolean hazardNow = collision || degraded || (aebsEnabled && (imminentCollisionFromSensors() || geometricImminentThreat()));
+        boolean engagedNow = aebsEnabled && (avoid || brakingNow || degraded);
+
+        if (!prevEngaged && engagedNow) Toolkit.getDefaultToolkit().beep();
+        if (!prevHazard && hazardNow) { Toolkit.getDefaultToolkit().beep(); Toolkit.getDefaultToolkit().beep(); }
+        if (!prevBraking && brakingNow) Toolkit.getDefaultToolkit().beep();
+        prevEngaged = engagedNow;
+        prevHazard = hazardNow;
+        prevBraking = brakingNow;
+
+        if (!world.sensorsHealthy()) {
+            if (sensorFaultSinceS < 0.0) sensorFaultSinceS = simTimeS;
+        } else {
+            sensorFaultSinceS = -1.0;
+        }
     }
 
     /**
@@ -430,18 +541,33 @@ public final class SimPanel extends JPanel {
 
     private boolean geometricEarlyThreat() {
         double c = clearanceAheadPx(world.ego().pos().x());
-        return Double.isFinite(c) && c < GEO_EARLY_CLEARANCE_PX;
+        return Double.isFinite(c) && c < (earlyDistM() * PX_PER_M);
     }
 
     private boolean geometricImminentThreat() {
         double c = clearanceAheadPx(world.ego().pos().x());
-        return Double.isFinite(c) && c < GEO_IMMINENT_CLEARANCE_PX;
+        return Double.isFinite(c) && c < (imminentDistM() * PX_PER_M);
     }
 
-    private static double forwardSpeedFactor(double clearancePx) {
+    private double forwardSpeedFactor(double clearancePx) {
         if (!Double.isFinite(clearancePx)) return 1.0;
-        if (clearancePx >= BRAKE_CLEARANCE_PX) return 1.0;
-        return clamp(clearancePx / BRAKE_CLEARANCE_PX, 0.12, 1.0);
+        double brakeClear = brakeClearancePx();
+        if (clearancePx >= brakeClear) return 1.0;
+        return clamp(clearancePx / brakeClear, 0.12, 1.0);
+    }
+
+    private double earlyDistM() {
+        // More sensitivity => treat hazards as "closer" sooner (react earlier).
+        // Keep mid-range (50%) clearly more conservative than baseline.
+        return EARLY_DIST_M * (1.0 + 0.9 * aebsSensitivity);
+    }
+
+    private double imminentDistM() {
+        return IMMINENT_DIST_M * (1.0 + 0.7 * aebsSensitivity);
+    }
+
+    private double brakeClearancePx() {
+        return BRAKE_CLEARANCE_PX * (1.1 + 1.0 * aebsSensitivity);
     }
 
     private static double clamp(double v, double lo, double hi) {
@@ -471,11 +597,11 @@ public final class SimPanel extends JPanel {
     }
 
     private boolean earlyThreatFromSensors() {
-        return threatFromRadar(EARLY_DIST_M, EARLY_TTC_S);
+        return aebsEnabled && threatFromRadar(earlyDistM(), EARLY_TTC_S);
     }
 
     private boolean imminentCollisionFromSensors() {
-        return threatFromRadar(IMMINENT_DIST_M, IMMINENT_TTC_S);
+        return aebsEnabled && threatFromRadar(imminentDistM(), IMMINENT_TTC_S);
     }
 
     private boolean threatFromRadar(double distThresholdM, double ttcThresholdS) {
@@ -554,21 +680,31 @@ public final class SimPanel extends JPanel {
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
-        Graphics2D g2 = (Graphics2D) g.create();
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        // Draw the world in a fixed coordinate system (world.width/height) but scale it to the
+        // current panel size so resizing the window "fills" the screen.
+        Graphics2D worldG = (Graphics2D) g.create();
+        worldG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        drawRoad(g2);
-        for (CarBlock c : world.npcs()) drawCar(g2, c);
-        for (PedestrianBlock p : world.pedestrians()) drawPedestrian(g2, p);
-        drawCar(g2, world.ego());
-        drawHud(g2);
+        double sx = getWidth() / Math.max(1.0, world.width());
+        double sy = getHeight() / Math.max(1.0, world.height());
+        worldG.scale(sx, sy);
 
-        g2.dispose();
+        drawRoad(worldG);
+        for (CarBlock c : world.npcs()) drawCar(worldG, c);
+        for (PedestrianBlock p : world.pedestrians()) drawPedestrian(worldG, p);
+        drawCar(worldG, world.ego());
+        worldG.dispose();
+
+        // HUD stays in screen pixels (unscaled) for readability.
+        Graphics2D hudG = (Graphics2D) g.create();
+        hudG.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        drawHud(hudG);
+        hudG.dispose();
     }
 
     private void drawRoad(Graphics2D g2) {
-        int w = getWidth();
-        int h = getHeight();
+        int w = (int) Math.round(world.width());
+        int h = (int) Math.round(world.height());
         int roadX = w / 2 - 110;
         int roadW = 220;
 
@@ -646,8 +782,12 @@ public final class SimPanel extends JPanel {
         double wheelKmh = sensors.simulatedWheelSpeedKmh(world);
         DrivingEnvironment env = DrivingEnvironment.forSimTime(simTimeS);
         g2.drawString(String.format(
-                "t=%.2fs  egoSpeed=%.0f px/s  wheel=%.0f km/h (0-250)  light=%.2f  camWx=%.2f  radarWx=%.2f  (SPACE pause)",
-                simTimeS, speed, wheelKmh, env.ambientLight(), env.cameraWeatherFactor(), env.radarWeatherFactor()), 10, 18);
+                "t=%.2fs  egoSpeed=%.0f px/s  wheel=%.0f km/h (0-250)  AEBS=%s  sens=%.0f%%  READY=%s  light=%.2f  camWx=%.2f  radarWx=%.2f  (SPACE pause)",
+                simTimeS, speed, wheelKmh,
+                (aebsEnabled ? "ON" : "OFF"),
+                aebsSensitivity * 100.0,
+                (aebsEnabled && world.sensorsHealthy() && !world.failSafeActive() ? "YES" : "NO"),
+                env.ambientLight(), env.cameraWeatherFactor(), env.radarWeatherFactor()), 10, 18);
         int subY = 36;
         if (collision) {
             g2.setColor(new Color(255, 90, 90));
@@ -667,6 +807,15 @@ public final class SimPanel extends JPanel {
         if (world.failSafeActive()) {
             g2.setColor(new Color(255, 210, 120));
             g2.drawString("FAIL-SAFE ACTIVE: " + world.failSafeReason(), 10, subY);
+            subY += 18;
+        }
+        // Visual feedback for immediate braking actions.
+        g2.setColor(brakingIndicator ? new Color(190, 225, 255) : new Color(170, 178, 190));
+        g2.drawString(brakingIndicator ? "BRAKING: YES" : "BRAKING: NO", 10, subY);
+        subY += 18;
+        if (sensorFaultSinceS >= 0.0 && (simTimeS - sensorFaultSinceS) > 2.0) {
+            g2.setColor(new Color(255, 150, 90));
+            g2.drawString("MAINTENANCE: check sensors / cleaning", 10, subY);
             subY += 18;
         }
         if (sensors.severeDecelerationTractionConcern()) {

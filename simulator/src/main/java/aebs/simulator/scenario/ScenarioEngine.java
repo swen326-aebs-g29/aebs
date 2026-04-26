@@ -7,6 +7,7 @@ import aebs.simulator.world.PedestrianBlock;
 import aebs.simulator.world.WorldState;
 
 import java.util.Random;
+import java.util.Optional;
 
 /**
  * Simple scenario engine that spawns NPC "car blocks" ahead of the ego vehicle and moves them.
@@ -22,10 +23,24 @@ public final class ScenarioEngine {
     private double pedSpawnCooldownS = 0.0;
     private int pedSeq = 0;
 
+    // Keep density reasonable so avoidance has room to work.
+    private static final int MAX_NPCS = 8;
+    private static final int MAX_PEDS = 10;
+    private static final double SPAWN_CLEARANCE_MARGIN_CAR_PX = 18.0;
+    private static final double SPAWN_CLEARANCE_MARGIN_PED_PX = 12.0;
+
     public ScenarioEngine(long seed, double laneXCenter, double npcSpawnY) {
         this.rng = new Random(seed);
         this.laneXCenter = laneXCenter;
         this.npcSpawnY = npcSpawnY;
+    }
+
+    /** Resets spawn timers and sequences (RNG stream continues). */
+    public void reset() {
+        spawnCooldownS = 0.0;
+        pedSpawnCooldownS = 0.0;
+        npcSeq = 0;
+        pedSeq = 0;
     }
 
     public void step(WorldState w, double dtSeconds) {
@@ -46,6 +61,17 @@ public final class ScenarioEngine {
 
         for (PedestrianBlock p : w.pedestrians()) {
             p.step(dtSeconds);
+        }
+
+        // If there is a collision, stop ego immediately and skip overlap resolution.
+        // (Overlap resolution would otherwise separate objects before the UI can register the impact.)
+        Optional<aebs.simulator.world.Collidable> hit = w.firstCollisionWithEgo();
+        if (hit.isPresent()) {
+            w.ego().setCollided(true);
+            hit.get().setCollided(true);
+            w.setBrakeCommand(1.0);
+            w.ego().setVel(new Vec2(0.0, 0.0));
+            return;
         }
 
         // Ensure objects do not "layer" on top of each other after movement.
@@ -170,11 +196,14 @@ public final class ScenarioEngine {
     }
 
     private void maybeSpawnNpc(WorldState w) {
-        // Spawn rate with some randomness
-        double spawnProb = 0.22;
+        if (w.npcs().size() >= MAX_NPCS) {
+            spawnCooldownS = 0.9 + rng.nextDouble() * 1.4;
+            return;
+        }
+        // Spawn rate with some randomness (higher = more traffic / obstacles).
+        double spawnProb = 0.28;
         if (rng.nextDouble() > spawnProb) {
-            // Fewer cars overall: wait longer before trying again.
-            spawnCooldownS = 1.4 + rng.nextDouble() * 2.2;
+            spawnCooldownS = 1.2 + rng.nextDouble() * 1.8;
             return;
         }
 
@@ -184,7 +213,7 @@ public final class ScenarioEngine {
 
         // Try a few times to find a non-overlapping x position.
         int tries = 0;
-        while (tries++ < 8) {
+        while (tries++ < 12) {
             double roadLeft = w.width() / 2.0 - 110.0;
             double roadRight = w.width() / 2.0 + 110.0;
 
@@ -196,27 +225,30 @@ public final class ScenarioEngine {
                     CarBlock.Kind.NPC,
                     new Vec2(x, y),
                     // Slower traffic so the simulation is easier to follow.
-                    new Vec2(0.0, 22 + rng.nextDouble() * 48), // px/s
+                    new Vec2(0.0, 18 + rng.nextDouble() * 36), // px/s
                     npcW,
                     npcH
             );
 
-            if (!overlapsAnyCarOrEgo(w, candidate)) {
+            if (!overlapsAnyCarOrEgo(w, candidate, SPAWN_CLEARANCE_MARGIN_CAR_PX)) {
                 w.addNpc(candidate);
-                // After a successful spawn, wait a while before next one.
-                spawnCooldownS = 1.8 + rng.nextDouble() * 2.8;
+                spawnCooldownS = 1.4 + rng.nextDouble() * 2.2;
                 return;
             }
         }
 
         // Couldn't find space; wait and try later.
-        spawnCooldownS = 0.9 + rng.nextDouble() * 1.1;
+        spawnCooldownS = 0.8 + rng.nextDouble() * 1.1;
     }
 
     private void maybeSpawnPedestrian(WorldState w) {
-        double spawnProb = 0.22;
+        if (w.pedestrians().size() >= MAX_PEDS) {
+            pedSpawnCooldownS = 0.9 + rng.nextDouble() * 1.4;
+            return;
+        }
+        double spawnProb = 0.26;
         if (rng.nextDouble() > spawnProb) {
-            pedSpawnCooldownS = 1.4 + rng.nextDouble() * 2.2;
+            pedSpawnCooldownS = 1.2 + rng.nextDouble() * 1.8;
             return;
         }
 
@@ -224,7 +256,7 @@ public final class ScenarioEngine {
         double pedH = 26;
 
         int tries = 0;
-        while (tries++ < 10) {
+        while (tries++ < 14) {
             double roadLeft = w.width() / 2.0 - 110.0;
             double roadRight = w.width() / 2.0 + 110.0;
 
@@ -235,7 +267,7 @@ public final class ScenarioEngine {
             Vec2 pos = new Vec2(x, yPos);
 
             // Down the road like NPC traffic, with a little lateral drift.
-            double vy = 18 + rng.nextDouble() * 44;
+            double vy = 14 + rng.nextDouble() * 32;
             double vx = rng.nextGaussian() * 10.0;
             Vec2 vel = new Vec2(vx, vy);
 
@@ -247,37 +279,43 @@ public final class ScenarioEngine {
                     pedH
             );
 
-            if (!overlapsAnyCarOrPed(w, candidate)) {
+            if (!overlapsAnyCarOrPed(w, candidate, SPAWN_CLEARANCE_MARGIN_PED_PX)) {
                 w.addPedestrian(candidate);
-                pedSpawnCooldownS = 1.8 + rng.nextDouble() * 2.8;
+                pedSpawnCooldownS = 1.4 + rng.nextDouble() * 2.2;
                 return;
             }
         }
 
-        pedSpawnCooldownS = 0.9 + rng.nextDouble() * 1.1;
+        pedSpawnCooldownS = 0.8 + rng.nextDouble() * 1.1;
     }
 
-    private static boolean overlapsAnyCarOrEgo(WorldState w, CarBlock candidate) {
+    private static boolean overlapsAnyCarOrEgo(WorldState w, CarBlock candidate, double marginPx) {
         Aabb c = candidate.aabb();
 
-        if (w.ego().aabb().intersects(c)) return true;
+        if (intersectsInflated(w.ego().aabb(), c, marginPx)) return true;
         for (CarBlock other : w.npcs()) {
-            if (other.aabb().intersects(c)) return true;
+            if (intersectsInflated(other.aabb(), c, marginPx)) return true;
         }
         return false;
     }
 
-    private static boolean overlapsAnyCarOrPed(WorldState w, PedestrianBlock candidate) {
+    private static boolean overlapsAnyCarOrPed(WorldState w, PedestrianBlock candidate, double marginPx) {
         Aabb c = candidate.aabb();
 
-        if (w.ego().aabb().intersects(c)) return true;
+        if (intersectsInflated(w.ego().aabb(), c, marginPx)) return true;
         for (CarBlock other : w.npcs()) {
-            if (other.aabb().intersects(c)) return true;
+            if (intersectsInflated(other.aabb(), c, marginPx)) return true;
         }
         for (PedestrianBlock other : w.pedestrians()) {
-            if (other.aabb().intersects(c)) return true;
+            if (intersectsInflated(other.aabb(), c, marginPx)) return true;
         }
         return false;
+    }
+
+    private static boolean intersectsInflated(Aabb a, Aabb b, double m) {
+        Aabb ai = new Aabb(a.x() - m, a.y() - m, a.w() + 2.0 * m, a.h() + 2.0 * m);
+        Aabb bi = new Aabb(b.x() - m, b.y() - m, b.w() + 2.0 * m, b.h() + 2.0 * m);
+        return ai.intersects(bi);
     }
 }
 

@@ -15,9 +15,18 @@ import aebs.simulator.world.CarBlock;
 import aebs.simulator.world.WorldState;
 
 import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.JSlider;
+import javax.swing.JToggleButton;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import java.awt.GraphicsEnvironment;
+import java.awt.BorderLayout;
+import java.awt.FlowLayout;
+import java.util.Hashtable;
 import java.util.Random;
 
 public final class SimulatedWorldApp {
@@ -47,7 +56,8 @@ public final class SimulatedWorldApp {
         ScenarioEngine scenario = new ScenarioEngine(
                 /* seed */ 20260415L,
                 /* laneXCenter */ w / 2.0,
-                /* npcSpawnY */ -90
+                // Spawn further ahead so AEBS/avoidance has time to react.
+                /* npcSpawnY */ -220
         );
 
         Random rng = new Random(20260415L);
@@ -62,7 +72,49 @@ public final class SimulatedWorldApp {
 
         JFrame frame = new JFrame("AEBS Simulator (animated blocks)");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setContentPane(panel);
+        JPanel root = new JPanel(new BorderLayout());
+        root.add(panel, BorderLayout.CENTER);
+
+        // Controls: manual AEBS on/off + sensitivity.
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 6));
+        JToggleButton aebsToggle = new JToggleButton("AEBS OFF", false);
+        aebsToggle.addActionListener(e -> {
+            boolean on = aebsToggle.isSelected();
+            aebsToggle.setText(on ? "AEBS ON" : "AEBS OFF");
+            panel.setAebsEnabled(on);
+        });
+        controls.add(aebsToggle);
+
+        controls.add(new JLabel("Sensitivity"));
+        JSlider sens = new JSlider(0, 100, (int) Math.round(panel.aebsSensitivity() * 100.0));
+        sens.setPaintTicks(true);
+        sens.setPaintLabels(true);
+        sens.setMajorTickSpacing(25);
+        sens.setMinorTickSpacing(5);
+        Hashtable<Integer, JLabel> labels = new Hashtable<>();
+        labels.put(0, new JLabel("0"));
+        labels.put(25, new JLabel("25"));
+        labels.put(50, new JLabel("50"));
+        labels.put(75, new JLabel("75"));
+        labels.put(100, new JLabel("100"));
+        sens.setLabelTable(labels);
+
+        JLabel sensValue = new JLabel(String.valueOf(sens.getValue()), SwingConstants.LEFT);
+        sensValue.setPreferredSize(sensValue.getPreferredSize());
+        sens.addChangeListener(e -> {
+            panel.setAebsSensitivity(sens.getValue() / 100.0);
+            sensValue.setText(String.valueOf(sens.getValue()));
+        });
+        controls.add(sens);
+        controls.add(new JLabel("%"));
+        controls.add(sensValue);
+
+        JButton restart = new JButton("Restart");
+        restart.addActionListener(e -> panel.restart());
+        controls.add(restart);
+
+        root.add(controls, BorderLayout.NORTH);
+        frame.setContentPane(root);
         frame.pack();
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
@@ -150,7 +202,8 @@ public final class SimulatedWorldApp {
                 60
         );
         WorldState world = new WorldState(w, h, ego);
-        ScenarioEngine scenario = new ScenarioEngine(20260415L, w / 2.0, -90);
+        // Spawn further ahead so AEBS/avoidance has time to react.
+        ScenarioEngine scenario = new ScenarioEngine(20260415L, w / 2.0, -220);
 
         Random rng = new Random(20260415L);
         SimulatedSensors sensorsA = new SimulatedSensors(pxPerMeter, 0.30, rng.nextLong());
