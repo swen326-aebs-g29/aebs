@@ -719,7 +719,7 @@ public final class SimPanel extends JPanel {
         // dashed lane marker
         g2.setColor(new Color(180, 180, 180, 110));
         for (int y = 0; y < h; y += 36) {
-            g2.fillRect(w / 2 - 2, y + (int) ((-simTimeS * 120) % 36), 4, 18);
+            g2.fillRect(w / 2 - 2, y + (int) ((simTimeS * 120) % 36), 4, 18);
         }
     }
 
