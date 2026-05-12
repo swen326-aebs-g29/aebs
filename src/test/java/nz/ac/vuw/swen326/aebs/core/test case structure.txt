@@ -44,7 +44,7 @@ EXPECT: driver notified system ready
 
 TEST CASE: 008_MaitenanceFeedback
 PRE: system detects issue
-STEPS: 
+STEPS: trigger maintenance condition
 EXPECT: maintenance alert shown
 
 ====
@@ -130,7 +130,7 @@ EXPECT: up to 2 retries attempted
 
 TEST CASE: 024_EscalateAlert
 PRE: 2 brake failures occur
-STEPS: 
+STEPS: check driver notification
 EXPECT: Escalated alert shown
 
 ====
