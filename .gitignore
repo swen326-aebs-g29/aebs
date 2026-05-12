@@ -34,3 +34,4 @@ out/
 # macOS
 .DS_Store
 "@ | Add-Content -Path .gitignore -Encoding utf8
+target/

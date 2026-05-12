@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: nz.ac.vuw.swen326.aebs.core.AebsDriverAlertTest
--------------------------------------------------------------------------------
-Tests run: 8, Failures: 0, Errors: 0, Skipped: 8, Time elapsed: 0.004 s -- in nz.ac.vuw.swen326.aebs.core.AebsDriverAlertTest

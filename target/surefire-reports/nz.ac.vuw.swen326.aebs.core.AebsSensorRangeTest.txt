@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: nz.ac.vuw.swen326.aebs.core.AebsSensorRangeTest
--------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 5, Time elapsed: 0.003 s -- in nz.ac.vuw.swen326.aebs.core.AebsSensorRangeTest
