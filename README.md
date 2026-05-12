@@ -38,6 +38,18 @@ aebs/
 └── traceability/       # Requirements traceability matrix
 ```
 
+## How to Run
+
+CD in to projects/aebs
+
+then run 
+
+mkdir -p simulator/.out
+javac -d simulator/.out $(find simulator/src/main/java -name "*.java")
+java -cp simulator/.out aebs.simulator.SimulatedWorldApp\
+
+in terminal
+
 ## Development
 
 - **Language:** Java 25 (Eclipse Temurin)
