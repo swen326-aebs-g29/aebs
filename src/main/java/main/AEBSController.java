@@ -1,8 +1,7 @@
-package core.src.core.main;
+package main;
 
-import core.src.core.Interfaces.Controls.*;
-import core.src.core.Implementions.*;
-//import core.src.core.*;
+import Interfaces.Controls.*;
+import Implementions.*;
 
 public class AEBSController implements IAEBSCorer {
 
@@ -12,7 +11,9 @@ public class AEBSController implements IAEBSCorer {
 
     private final RobustSensorFusionModule fusion;
     private final AEBSDecisionModule decision;
-    private final BrakingActuatorModule actuator;
+    private final BrakingControlModule actuator;
+
+    private boolean brakingActive = false;
 
     public AEBSController(ISensorSystem sensors,
                           BrakingControlInterface brake,
@@ -23,46 +24,87 @@ public class AEBSController implements IAEBSCorer {
         this.driver = driver;
 
         this.fusion = new RobustSensorFusionModule(sensors, driver);
+
         this.decision = new AEBSDecisionModule();
-        this.actuator = new BrakingActuatorModule(brake, driver);
+
+        this.actuator = new BrakingControlModule(brake, driver);
     }
 
     @Override
     public void update() {
 
+        // --- AEBS OFF ---
         if (!driver.isAEBSActive()) {
+            if (brakingActive) {
+                actuator.stopBraking();
+                brakingActive = false;
+            }
             driver.showStatus("AEBS OFF");
             return;
         }
 
-        // --- 1. FUSE SENSOR DATA ---
+        // --- 1. SENSOR FUSION ---
         ReadingRadar fused = fusion.getFusedReading();
 
-        // Safety guard
-        if (fused.getRadarReading() < 0) {
+        // FIX 2: consistent validation message
+        if (!isValid(fused)) {
             driver.showStatus("Invalid sensor data");
             return;
         }
 
-        // --- 2. DECISION LOGIC ---
+        // --- 2. DECISION ---
         double brakeLevel = decision.decide(fused, driver.getSensitivity());
 
-        // --- 3. DRIVER ALERT ---
+        // --- 3. ACTION ---
         if (brakeLevel > 0) {
-            driver.showWarning(
-                    "Obstacle: " + fused.getCameraObject() +
-                            " Distance: " + fused.getRadarReading()
-            );
-            driver.playSound("beep");
-            driver.showVisual();
-        }
 
-        // --- 4. ACTUATION ---
-        if (brakeLevel > 0) {
-            actuator.executeBraking(
-                    brakeLevel,
-                    sensors.getWheelSpeedReadings()
-            );
+            if (!brakingActive) {
+
+                // Trigger alerts once
+                driver.showWarning(
+                        "Obstacle: " + fused.getCameraObject() +
+                                " Distance: " + fused.getRadarReading()
+                );
+
+                driver.playSound("warning_beep");
+                driver.showVisual();
+
+                actuator.startBraking(
+                        brakeLevel,
+                        sensors.getWheelSpeedReadings()
+                );
+
+                brakingActive = true;
+            }
+
+        } else {
+
+            if (brakingActive) {
+                actuator.stopBraking();
+                driver.showStatus("Hazard cleared");
+                brakingActive = false;
+            }
         }
+    }
+
+    // --- VALIDATION ---
+    private boolean isValid(ReadingRadar fused) {
+
+        if (fused == null) return false;
+
+        if (Double.isNaN(fused.getRadarReading())) return false;
+
+        if (fused.getRadarReading() < 0) return false;
+
+        if (fused.getCameraObject() == null) return false;
+
+        if (fused.getWheelSpeed() <= 0) return false;
+
+        return true;
+    }
+
+
+    public BrakingControlModule getActuator() {
+        return actuator;
     }
 }
