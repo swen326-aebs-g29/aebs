@@ -1,4 +1,4 @@
-package core.src.core.main;
+package main;
 
 public interface IAEBSCorer {
     void update();
