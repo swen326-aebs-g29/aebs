@@ -5,6 +5,8 @@ import Interfaces.Controls.IDriverInterface;
 import Implementions.WheelSpeedReading;
 
 import java.util.Arrays;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 public class BrakingControlModule {
 
@@ -17,6 +19,8 @@ public class BrakingControlModule {
     private static final double TOLERANCE = 0.05;
 
     private volatile boolean brakingActive = false;
+    private volatile double requestedBrakeLevel = 0.0;
+    private volatile Supplier<WheelSpeedReading[]> wheelSupplier = () -> new WheelSpeedReading[0];
 
 
     public BrakingControlModule(BrakingControlInterface brake,
@@ -29,28 +33,39 @@ public class BrakingControlModule {
     // --- PUBLIC CONTROL ---
 
     public void startBraking(double brakeLevel, WheelSpeedReading[] wheels) {
+        startBraking(brakeLevel, () -> wheels);
+    }
 
-        if(brakingActive) return;
+    public void startBraking(double brakeLevel, Supplier<WheelSpeedReading[]> wheelSupplier) {
+        this.requestedBrakeLevel = clampBrakeLevel(brakeLevel);
+        this.wheelSupplier = Objects.requireNonNull(wheelSupplier, "wheelSupplier");
+
+        if (brakingActive) {
+            return;
+        }
+
         brakingActive = true;
-
-        new Thread(() -> controlLoop(brakeLevel, wheels)).start();
-
+        Thread worker = new Thread(this::controlLoop, "braking-control-module");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     public void stopBraking() {
         brakingActive = false;
+        requestedBrakeLevel = 0.0;
+        brake.applyBrake(0.0);
     }
 
     // --- CORE LOOP ---
 
-    private void controlLoop(double brakeLevel, WheelSpeedReading[] wheels) {
-
+    private void controlLoop() {
         int retries = 0;
-        double previousRPM = getAverageRPM(wheels);
+        double previousRPM = getAverageRPM(wheelSupplier.get());
 
         while (brakingActive) {
-
             long cycleStart = System.nanoTime();
+            double brakeLevel = requestedBrakeLevel;
+            WheelSpeedReading[] wheels = wheelSupplier.get();
 
             // 1. Issue command (EVERY 50ms)
             brake.applyBrake(brakeLevel);
@@ -140,7 +155,12 @@ public class BrakingControlModule {
     // --- HELPERS ---
 
     private double getAverageRPM(WheelSpeedReading[] wheels) {
+        if (wheels == null || wheels.length == 0) {
+            return 0.0;
+        }
+
         return Arrays.stream(wheels)
+                .filter(Objects::nonNull)
                 .mapToDouble(WheelSpeedReading::rpm)
                 .average()
                 .orElse(0);
@@ -154,6 +174,10 @@ public class BrakingControlModule {
 
     private double expectedDeceleration(double brakeLevel) {
         return brakeLevel * 500;
+    }
+
+    private double clampBrakeLevel(double brakeLevel) {
+        return Math.max(0.0, Math.min(1.0, brakeLevel));
     }
 
 }
