@@ -1,0 +1,179 @@
+TEST CASE: test case number/req ID + small title
+PRE: preconditions before running test
+STEPS: actions used to perform test
+EXPECT: expected outcome
+
+tests are done to test whether expected outcomes are met or not. if they are met then that test counts as passed, if not then there will need to be adjustments to the simulation
+
+============================================
+
+TEST CASE: 001_HazardAudioAlert
+PRE: AEBS active, hazard detected
+STEPS: trigger hazard proximity
+EXEPCT: auditory hazard alert plays
+
+TEST CASE: 002_HazardVisualAlert
+PRE: AEBS active, hazard detected
+STEPS: trigger hazard proximity
+EXPECT: visual hazard alert displays
+
+TEST CASE: 003_SensitivityControls
+PRE: system running
+STEPS: change sensitivity/threshold settings
+EXPECT: settings persist and affect detection
+
+TEST CASE: 004_ManualToggle
+PRE: system running
+STEPS: press AEBS button
+EXPECT: AEBS turns on/off
+
+TEST CASE: 005_BrakeVisualAlert
+PRE: AEBS active, breaking imminent
+STEPS: trigger AEBS braking
+EXPECT: visual brake alert displays
+
+TEST CASE: 006_BrakeAduitoryAlert
+PRE: AEBS active, breaking imminent
+STEPS: trigger AEBS braking
+EXPECT: auditory brake alert plays
+
+TEST CASE: 007_ReadinessFeedback
+PRE: system starting
+STEPS: system initialization
+EXPECT: driver notified system ready
+
+TEST CASE: 008_MaitenanceFeedback
+PRE: system detects issue
+STEPS: 
+EXPECT: maintenance alert shown
+
+====
+
+TEST CASE: 009_RadarDataCollection
+PRE: object present
+STEPS: query radar data
+EXPECT: distance + relative speed
+
+TEST CASE: 010_RadarFormatting
+PRE: radar has target
+STEPS: read radar data
+EXPECT: distance(m) + speed(km/h)
+
+TEST CASE: 011_RadarRate
+PRE: system running
+STEPS: monitor radar updates for 1 second
+EXPECT: >=10 updates
+
+TEST CASE: 012_CameraClassifiction
+PRE: object present
+STEPS: query camera sensors
+EXPECT: object type identified
+
+TEST CASE: 013_CameraRate
+PRE: system running
+STEPS: monitor camera updates for 1 second
+EXPECT: >=20 updates
+
+TEST CASE: 014_WheelRotationalSpeed
+PRE: vehicle moving
+STEPS: query wheel sensors
+EXPECT: RPM returned per wheel
+
+TEST CASE: 015_WheelFormat
+PRE: vehicle moving
+STEPS: read wheel data
+EXPECT: Values in RPM
+
+TEST CASE: 016_WheelRate
+PRE: system running
+STEPS: monitor wheel for 1 second
+EXPECT >=100 updates received
+
+====
+
+TEST CASE: 017_RedundantSensors
+PRE: sensor A fails
+STEPS: continue operation
+EXPECT: sensor B provides data
+
+TEST CASE: 018_MultipleInputs
+PRE: both sensors active
+STEPS: read sensor data
+EXPECT: both inputs accepted
+
+====
+
+TEST CASE: 019_BrakeSignals
+PRE: braking imminent
+STEPS: AEBS triggers
+EXPECT: brake control signal sent
+
+TEST CASE: 020_BreakRate
+PRE: active braking
+STEPS: monitor signal timing for 100ms
+EXPECT: >=2 signals sent
+
+TEST CASE: 021_BrakeVerification
+PRE: brake command sent
+STEPS: wait 50ms, check feedback
+EXPECT: brake activation confirmed
+
+TEST CASE: 022_BrakeSuccess
+PRE: brake applied
+STEPS: compare speed reduction to expected
+EXPECT: within +5% of deceleration curve
+
+TEST CASE: 023_CorrectiveBraking
+PRE: first brake attempt fails
+STEPS: monitor retry attempts
+EXPECT: up to 2 retries attempted
+
+TEST CASE: 024_EscalateAlert
+PRE: 2 brake failures occur
+STEPS: 
+EXPECT: Escalated alert shown
+
+====
+
+TEST CASE: 025_RadarRange
+PRE: Objects at various distances
+STEPS: test 0.5m, 100m, 200m, 250m
+EXPECT: detection 0.5-200m only
+
+TEST CASE: 026_RadarAccuracy
+PRE: vary object size + weather
+STEPS: check detection threshold application
+EXPECT: thresholds applied correctly
+
+TEST CASE: 027_CameraAccuracy
+PRE: vary light + weather
+STEPS: check classification across conditions
+EXPECT: accuracy varies per conditions
+
+TEST CASE: 028_WheelSpeedRange
+PRE: simulate 0, 125, 250, 300 km/h
+STEPS: read wheel speed
+EXPECT: valid 0-250km/h only
+
+TEST CASE: 029_DecelerationThreshold
+PRE: rapid deceleration simulated
+STEPS: monitor for threshold breach
+EXPECT: braking/traction alert triggered
+
+====
+
+TEST CASE: 030_FaulTDetection
+PRE: inject abnormal sensor value
+STEPS: system running
+EXPECT: fault detected and reported
+
+TEST CASE: 031_FaultTolerance
+PRE: sensor fails during hazard
+STEPS: check hazard response
+EXPECT: safe hazard management continues
+
+TEST CASE: 032_FailSafe
+PRE: normal operation impossible
+STEPS: trigger critical failure
+EXPECT: Fail-safe mode activated
+

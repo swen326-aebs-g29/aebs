@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: nz.ac.vuw.swen326.aebs.core.AebsBrakingControlTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 6, Time elapsed: 0.034 s -- in nz.ac.vuw.swen326.aebs.core.AebsBrakingControlTest
