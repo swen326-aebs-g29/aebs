@@ -1,10 +1,13 @@
 package aebs.simulator.ui;
 
 import aebs.simulator.environment.DrivingEnvironment;
+import aebs.simulator.integration.SimulatorAebsBridge;
 import aebs.simulator.model.Aabb;
 import aebs.simulator.model.Vec2;
+import aebs.simulator.perception.CameraReading;
 import aebs.simulator.perception.RadarReading;
 import aebs.simulator.perception.SimulatedSensors;
+import aebs.simulator.perception.WheelSpeedReading;
 import aebs.simulator.scenario.ScenarioEngine;
 import aebs.simulator.world.CarBlock;
 import aebs.simulator.world.PedestrianBlock;
@@ -26,6 +29,7 @@ public final class SimPanel extends JPanel {
     private final WorldState world;
     private final ScenarioEngine scenario;
     private final SimulatedSensors sensors;
+    private final SimulatorAebsBridge controllerBridge;
     private final Timer timer;
 
     private final Vec2 initialEgoPos;
@@ -117,6 +121,7 @@ public final class SimPanel extends JPanel {
         this.world = world;
         this.scenario = scenario;
         this.sensors = sensors;
+        this.controllerBridge = new SimulatorAebsBridge(world);
         setPreferredSize(new Dimension((int) world.width(), (int) world.height()));
         setBackground(new Color(14, 16, 20));
         setFocusable(true);
@@ -201,6 +206,7 @@ public final class SimPanel extends JPanel {
         // Reset scenario + sensors internal state
         scenario.reset();
         sensors.reset();
+        controllerBridge.reset();
 
         repaint();
         requestFocusInWindow();
@@ -319,11 +325,18 @@ public final class SimPanel extends JPanel {
             desiredEgoX = moveToward(desiredEgoX, centerX, 60.0 * dt);
         }
 
+        RadarReading[] controllerRadar = sensors.buildRadarReadings(world);
+        CameraReading[] controllerCamera = sensors.buildCameraReadings(world);
+        WheelSpeedReading[] controllerWheel = sensors.buildWheelSpeedReadings(world);
+        double controllerBrakeCmd = aebsEnabled
+                ? controllerBridge.update(controllerRadar, controllerCamera, controllerWheel, world.sensorsHealthy())
+                : controllerBridge.disable();
+
         // Apply any corrective override requested by brake supervisor.
         if (simTimeS >= brakeOverrideUntilS) {
             brakeOverrideCmd = 0.0;
         }
-        double effectiveBrakeCmd = Math.max(plannedBrakeCmd, brakeOverrideCmd);
+        double effectiveBrakeCmd = Math.max(plannedBrakeCmd, Math.max(controllerBrakeCmd, brakeOverrideCmd));
         effectiveBrakeCmd = clamp(effectiveBrakeCmd, 0.0, 1.0);
         double effectiveSpeedFactor = clamp(1.0 - effectiveBrakeCmd, 0.0, 1.0);
 
@@ -781,6 +794,7 @@ public final class SimPanel extends JPanel {
         double speed = world.egoSpeedPixelsPerSec();
         double wheelKmh = sensors.simulatedWheelSpeedKmh(world);
         DrivingEnvironment env = DrivingEnvironment.forSimTime(simTimeS);
+        String controllerReason = controllerBridge.lastDecision().reason().replace('_', ' ');
         g2.drawString(String.format(
                 "t=%.2fs  egoSpeed=%.0f px/s  wheel=%.0f km/h (0-250)  AEBS=%s  sens=%.0f%%  READY=%s  light=%.2f  camWx=%.2f  radarWx=%.2f  (SPACE pause)",
                 simTimeS, speed, wheelKmh,
@@ -809,6 +823,9 @@ public final class SimPanel extends JPanel {
             g2.drawString("FAIL-SAFE ACTIVE: " + world.failSafeReason(), 10, subY);
             subY += 18;
         }
+        g2.setColor(new Color(200, 220, 255));
+        g2.drawString("AEBS CTRL: " + controllerReason, 10, subY);
+        subY += 18;
         // Visual feedback for immediate braking actions.
         g2.setColor(brakingIndicator ? new Color(190, 225, 255) : new Color(170, 178, 190));
         g2.drawString(brakingIndicator ? "BRAKING: YES" : "BRAKING: NO", 10, subY);
