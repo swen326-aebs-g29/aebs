@@ -1,4 +1,4 @@
-package core.src.core.Interfaces.Controls;
+package core.src.main.java.Interfaces.Controls;
 
 public interface IDriverInterface{
     void showWarning(String message);
