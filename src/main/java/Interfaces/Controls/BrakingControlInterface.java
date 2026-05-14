@@ -1,5 +1,5 @@
-package core.src.core.Interfaces.Controls;
+package Interfaces.Controls;
 
 public interface BrakingControlInterface {
-    void applyBrake(double v);
+    void applyBrake(double brakeLevel);
 }

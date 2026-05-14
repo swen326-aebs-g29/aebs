@@ -1,6 +1,7 @@
 package aebs.simulator;
 
 import aebs.simulator.faults.PerceptionFaultInjector;
+import aebs.simulator.integration.SimulatorAebsBridge;
 import aebs.simulator.model.Vec2;
 import aebs.simulator.perception.CameraReading;
 import aebs.simulator.perception.RadarReading;
@@ -126,6 +127,7 @@ public final class SimulatedWorldApp {
                 new WheelSpeedReading[0]
         );
         SensorHealthMonitor health = new SensorHealthMonitor();
+        SimulatorAebsBridge bridge = new SimulatorAebsBridge(world);
 
         // Update sensors at their specified frequencies:
         // - wheel speed: 10ms (100Hz)
@@ -182,7 +184,7 @@ public final class SimulatedWorldApp {
 
             SensorHealthMonitor.Health healthStatus = health.evaluate(t, radarF, camF, wheelF);
             panel.world().setSensorHealth(healthStatus.ok(), healthStatus.summary());
-            System.out.println(formatPerception(perception, t, panel.world(), healthStatus));
+            System.out.println(formatPerception(perception, bridge, t, panel.world(), healthStatus));
         });
         sensorTimer.setCoalesce(true);
         sensorTimer.start();
@@ -217,6 +219,7 @@ public final class SimulatedWorldApp {
                 new WheelSpeedReading[0]
         );
         SensorHealthMonitor health = new SensorHealthMonitor();
+        SimulatorAebsBridge bridge = new SimulatorAebsBridge(world);
 
         final double dt = 0.01; // 10ms base tick
         double t = 0.0;
@@ -260,25 +263,33 @@ public final class SimulatedWorldApp {
             CameraReading[] camF = RedundantSensorFusion.fuseCamera(cameraA, cameraB);
             WheelSpeedReading[] wheelF = RedundantSensorFusion.fuseWheel(wheelA, wheelB);
             perception.updateAllSensors(radarF, camF, wheelF);
-            // Headless mode has no control loop; report brakeCmd as 0.
-            world.setBrakeCommand(0.0);
             SensorHealthMonitor.Health healthStatus = health.evaluate(t, radarF, camF, wheelF);
             world.setSensorHealth(healthStatus.ok(), healthStatus.summary());
-            System.out.println(formatPerception(perception, t, world, healthStatus));
+            world.setBrakeCommand(bridge.update(radarF, camF, wheelF, healthStatus.ok()));
+            System.out.println(formatPerception(perception, bridge, t, world, healthStatus));
         }
     }
 
-    private static String formatPerception(VehiclePerceptionSystem p, double tS, WorldState world, SensorHealthMonitor.Health h) {
+    private static String formatPerception(
+            VehiclePerceptionSystem p,
+            SimulatorAebsBridge bridge,
+            double tS,
+            WorldState world,
+            SensorHealthMonitor.Health h
+    ) {
         RadarReading[] r = p.getRadarReadings();
         CameraReading[] c = p.getCameraReadings();
         WheelSpeedReading[] w = p.getWheelSpeedReadings();
 
         String r0 = r.length == 0 ? "" : String.format("%.2fm@%s", r[0].distanceMetres(), r[0].speedObject());
         double rpm0 = w.length == 0 || w[0].rpm() == null ? 0.0 : w[0].rpm();
+        String controllerReason = bridge.lastDecision().reason();
 
-        return String.format("t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s sensorHealth=%s failSafe=%s",
+        return String.format(
+                "t=%.2f radarN=%d radar0=%s cameraN=%d wheelN=%d wheel0_rpm=%.1f brakeCmd=%.2f brakeAlert=%s sensorHealth=%s failSafe=%s controller=%s",
                 tS, r.length, r0, c.length, w.length, rpm0, world.brakeCommand(), world.driverBrakeAlert() ? "YES" : "NO",
                 (h == null || h.ok()) ? "OK" : h.summary(),
-                world.failSafeActive() ? world.failSafeReason() : "NO");
+                world.failSafeActive() ? world.failSafeReason() : "NO",
+                controllerReason);
     }
 }
