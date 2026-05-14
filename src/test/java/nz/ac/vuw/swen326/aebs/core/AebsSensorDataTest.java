@@ -1,9 +1,10 @@
 package nz.ac.vuw.swen326.aebs.core;
 
-import aebs.simulator.perception.*;
+import aebs.simulator.perception.CameraReading;
+import aebs.simulator.perception.RadarReading;
+import aebs.simulator.perception.WheelSpeedReading;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
-
 /**
  * Tests for sensor data collection and formatting.
  * REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-014, REQ-015, REQ-016

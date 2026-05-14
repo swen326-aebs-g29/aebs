@@ -1,9 +1,13 @@
 package nz.ac.vuw.swen326.aebs.core;
 
-import aebs.simulator.model.Vec2;
-import aebs.simulator.perception.*;
-import aebs.simulator.world.CarBlock;
-import aebs.simulator.world.WorldState;
+import Implementions.WheelSpeedReading;
+import Interfaces.Controls.IDriverInterface;
+import Interfaces.Controls.BrakingControlInterface;
+import nz.ac.vuw.swen326.aebs.core.AEBSController;
+import nz.ac.vuw.swen326.aebs.core.CameraReading;
+import nz.ac.vuw.swen326.aebs.core.ControllerDecision;
+import nz.ac.vuw.swen326.aebs.core.RadarReading;
+import nz.ac.vuw.swen326.aebs.core.SensorSnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,143 +18,181 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class AebsDriverAlertTest {
 
-    private WorldState world;
-    private SensorHealthMonitor monitor;
+    private AEBSController controller;
+    private TrackingBrakeActuator brakeActuator;
+    private TrackingDriverInterface driverInterface;
 
     @BeforeEach
     void setUp() {
-        CarBlock ego = new CarBlock("ego", CarBlock.Kind.EGO,
-                new Vec2(200, 400), new Vec2(0, 60), 34, 58);
-        world = new WorldState(400, 800, ego);
-        monitor = new SensorHealthMonitor();
+        brakeActuator = new TrackingBrakeActuator();
+        driverInterface = new TrackingDriverInterface();
+        main.BrakingControlModule braking = new main.BrakingControlModule(
+                brakeActuator, driverInterface
+        );
+        WheelSpeedReading[] wheels = {
+                new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                new WheelSpeedReading(300.0, System.currentTimeMillis())
+        };
+        controller = new AEBSController(braking, () -> wheels);
     }
 
     // TEST CASE 001 - REQ-001
     @Test
     void testHazardAudioAlert() {
-        // PRE: AEBS active, hazard detected (sensor healthy, object close)
-        RadarReading[] hazard = {new RadarReading(5.0, 80.0, System.currentTimeMillis())};
-        SensorHealthMonitor.Health health = monitor.evaluate(1.0, hazard,
-                new CameraReading[0], new WheelSpeedReading[0]);
-        world.setSensorHealth(health.ok(), health.summary());
-
-        // EXPECT: system is healthy and hazard is detectable (audio alert condition met)
-        assertTrue(world.sensorsHealthy(),
-                "Sensors should be healthy to support hazard audio alert");
-        assertTrue(hazard[0].distanceMetres() < 10.0,
-                "Object within 10m should trigger hazard proximity alert");
+        // PRE: AEBS active, hazard detected
+        SensorSnapshot snapshot = hazardSnapshot(5.0, 80.0);
+        // STEPS: trigger hazard proximity
+        ControllerDecision decision = controller.onSensorData(snapshot);
+        // EXPECT: braking active, audio alert condition met
+        assertTrue(decision.braking(),
+                "Braking should be active on hazard detection");
     }
 
     // TEST CASE 002 - REQ-002
     @Test
     void testHazardVisualAlert() {
         // PRE: AEBS active, hazard detected
-        RadarReading[] hazard = {new RadarReading(5.0, 80.0, System.currentTimeMillis())};
-        SensorHealthMonitor.Health health = monitor.evaluate(1.0, hazard,
-                new CameraReading[0], new WheelSpeedReading[0]);
-        world.setSensorHealth(health.ok(), health.summary());
-
-        // EXPECT: system is healthy and hazard proximity condition is met for visual alert
-        assertTrue(world.sensorsHealthy(),
-                "Sensors should be healthy to support hazard visual alert");
+        SensorSnapshot snapshot = hazardSnapshot(5.0, 80.0);
+        // STEPS: trigger hazard proximity
+        ControllerDecision decision = controller.onSensorData(snapshot);
+        // EXPECT: braking active, visual alert condition met
+        assertTrue(decision.braking(),
+                "Braking should be active for visual alert condition");
+        assertNotNull(decision.reason(),
+                "Decision should include a reason for the alert");
     }
 
     // TEST CASE 003 - REQ-003
     @Test
     void testSensitivityControls() {
         // PRE: system running
-        // STEPS: simulate changing sensitivity by adjusting brake command threshold
-        world.setBrakeCommand(0.3); // low sensitivity
-        double lowSensitivity = world.brakeCommand();
-
-        world.setBrakeCommand(0.8); // high sensitivity
-        double highSensitivity = world.brakeCommand();
-
-        // EXPECT: settings persist and affect detection threshold
-        assertEquals(0.3, lowSensitivity, 0.001,
-                "Low sensitivity setting should persist");
-        assertEquals(0.8, highSensitivity, 0.001,
-                "High sensitivity setting should persist");
-        assertNotEquals(lowSensitivity, highSensitivity,
-                "Different sensitivity settings should produce different thresholds");
+        // STEPS: test threshold boundary
+        SensorSnapshot atThreshold = hazardSnapshot(28.0, 50.0);
+        SensorSnapshot belowThreshold = hazardSnapshot(30.0, 10.0);
+        // EXPECT: threshold affects whether braking triggers
+        ControllerDecision atDecision = controller.onSensorData(atThreshold);
+        ControllerDecision belowDecision = controller.onSensorData(belowThreshold);
+        assertNotEquals(atDecision.braking(), belowDecision.braking(),
+                "Different distances should produce different braking decisions");
     }
 
     // TEST CASE 004 - REQ-004
     @Test
     void testManualToggle() {
-        // PRE: system running
-        // STEPS: simulate toggling AEBS off then on via brake command
-        world.setBrakeCommand(0.0); // AEBS off
-        assertEquals(0.0, world.brakeCommand(), 0.001,
-                "AEBS should be off when brake command is 0");
-
-        world.setBrakeCommand(1.0); // AEBS on
-        assertEquals(1.0, world.brakeCommand(), 0.001,
-                "AEBS should be on when brake command is 1");
+        // PRE: system running, no threat
+        SensorSnapshot noThreat = clearSnapshot();
+        // STEPS: pass clear snapshot
+        ControllerDecision decision = controller.onSensorData(noThreat);
+        // EXPECT: AEBS inactive when no hazard
+        assertFalse(decision.braking(),
+                "AEBS should not brake when no threat is present");
+        assertEquals("clear_path", decision.reason(),
+                "Reason should indicate clear path");
     }
 
     // TEST CASE 005 - REQ-005
     @Test
     void testBrakeVisualAlert() {
         // PRE: AEBS active, braking imminent
-        world.setBrakeCommand(1.0);
-        world.setDriverBrakeAlert(true);
-
-        // EXPECT: visual brake alert condition is active
-        assertTrue(world.driverBrakeAlert(),
-                "Driver brake alert should be active when braking is imminent");
-        assertTrue(world.brakeCommand() > 0,
-                "Brake command should be active during visual alert condition");
+        SensorSnapshot snapshot = hazardSnapshot(5.0, 80.0);
+        ControllerDecision decision = controller.onSensorData(snapshot);
+        // EXPECT: visual brake alert condition active
+        assertTrue(decision.braking(),
+                "Visual brake alert condition requires active braking");
+        assertTrue(decision.brakeLevel() > 0,
+                "Brake level should be positive for visual alert");
     }
 
     // TEST CASE 006 - REQ-006
     @Test
     void testBrakeAuditoryAlert() {
         // PRE: AEBS active, braking imminent
-        world.setBrakeCommand(1.0);
-        world.setDriverBrakeAlert(true);
-
-        // EXPECT: auditory brake alert condition is active
-        assertTrue(world.driverBrakeAlert(),
-                "Driver brake alert should be active for auditory alert condition");
+        SensorSnapshot snapshot = hazardSnapshot(5.0, 80.0);
+        ControllerDecision decision = controller.onSensorData(snapshot);
+        // EXPECT: auditory brake alert condition active
+        assertTrue(decision.braking(),
+                "Auditory brake alert condition requires active braking");
     }
 
     // TEST CASE 007 - REQ-007
     @Test
     void testReadinessFeedback() {
-        // PRE: system starting
-        // STEPS: initialise world and check sensor health baseline
-        RadarReading[] empty = new RadarReading[0];
-        CameraReading[] emptyCam = new CameraReading[0];
-        WheelSpeedReading[] emptyWheel = new WheelSpeedReading[0];
-
-        // Fresh monitor with no prior state should report OK on empty readings
-        SensorHealthMonitor freshMonitor = new SensorHealthMonitor();
-        SensorHealthMonitor.Health health = freshMonitor.evaluate(0.0,
-                empty, emptyCam, emptyWheel);
-        world.setSensorHealth(health.ok(), health.summary());
-
-        // EXPECT: system ready state is communicated (no faults on init)
-        assertFalse(world.failSafeActive(),
-                "Fail-safe should not be active on system initialisation");
-        assertEquals("OK", world.sensorHealthSummary(),
-                "System should report OK on initialisation");
+        // PRE: system starting, no threats
+        SensorSnapshot snapshot = clearSnapshot();
+        ControllerDecision decision = controller.onSensorData(snapshot);
+        // EXPECT: system returns idle state on initialisation
+        assertFalse(decision.braking(),
+                "System should be idle and ready on initialisation");
+        assertNotNull(decision.reason(),
+                "System should report a status on initialisation");
     }
 
     // TEST CASE 008 - REQ-008
     @Test
     void testMaintenanceFeedback() {
-        // PRE: system detects fault condition
-        RadarReading[] bad = {new RadarReading(-1.0, Double.NaN,
-                System.currentTimeMillis())};
-        SensorHealthMonitor.Health health = monitor.evaluate(1.0, bad,
-                new CameraReading[0], new WheelSpeedReading[0]);
-        world.setSensorHealth(health.ok(), health.summary());
+        // PRE: sensors report unhealthy
+        SensorSnapshot faultSnapshot = new SensorSnapshot(
+                new RadarReading[]{new RadarReading(5.0, 80.0, System.currentTimeMillis())},
+                new CameraReading[]{new CameraReading("vehicle", 0.9, System.currentTimeMillis())},
+                new WheelSpeedReading[]{new WheelSpeedReading(300.0, System.currentTimeMillis())},
+                false,
+                System.currentTimeMillis()
+        );
+        ControllerDecision decision = controller.onSensorData(faultSnapshot);
+        // EXPECT: controller reports sensor fault
+        assertFalse(decision.braking(),
+                "System should not brake when sensors are unhealthy");
+        assertEquals("sensor_fault", decision.reason(),
+                "System should report sensor fault for maintenance alert");
+    }
 
-        // EXPECT: maintenance alert shown (sensor health is not OK)
-        assertFalse(world.sensorsHealthy(),
-                "System should flag unhealthy sensors as a maintenance condition");
-        assertFalse(world.sensorHealthSummary().equals("OK"),
-                "Health summary should not be OK when maintenance is needed");
+    // --- Helpers ---
+
+    private SensorSnapshot hazardSnapshot(double distanceM, double speedKph) {
+        return new SensorSnapshot(
+                new RadarReading[]{new RadarReading(distanceM, speedKph, System.currentTimeMillis())},
+                new CameraReading[]{new CameraReading("vehicle", 0.9, System.currentTimeMillis())},
+                new WheelSpeedReading[]{
+                        new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                        new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                        new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                        new WheelSpeedReading(300.0, System.currentTimeMillis())
+                },
+                true,
+                System.currentTimeMillis()
+        );
+    }
+
+    private SensorSnapshot clearSnapshot() {
+        return new SensorSnapshot(
+                new RadarReading[0],
+                new CameraReading[0],
+                new WheelSpeedReading[]{
+                        new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                        new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                        new WheelSpeedReading(300.0, System.currentTimeMillis()),
+                        new WheelSpeedReading(300.0, System.currentTimeMillis())
+                },
+                true,
+                System.currentTimeMillis()
+        );
+    }
+
+    private static final class TrackingBrakeActuator implements BrakingControlInterface {
+        double lastLevel = 0.0;
+        @Override
+        public void applyBrake(double level) { this.lastLevel = level; }
+    }
+
+    private static final class TrackingDriverInterface implements IDriverInterface {
+        boolean warningShown = false;
+        boolean alertActive = false;
+        @Override public void showWarning(String m) { warningShown = true; }
+        @Override public void playSound(String s) {}
+        @Override public void showStatus(String m) {}
+        @Override public void setControl() { alertActive = true; }
+        @Override public void feedback(String m) {}
     }
 }

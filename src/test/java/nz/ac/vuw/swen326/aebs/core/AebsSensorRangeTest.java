@@ -1,7 +1,11 @@
 package nz.ac.vuw.swen326.aebs.core;
 
 import aebs.simulator.faults.PerceptionFaultInjector;
-import aebs.simulator.perception.*;
+import aebs.simulator.perception.CameraReading;
+import aebs.simulator.perception.RadarReading;
+import aebs.simulator.perception.WheelSpeedReading;
+import aebs.simulator.perception.SensorHealthMonitor;
+import aebs.simulator.perception.SimulatedSensors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
